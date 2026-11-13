@@ -59,6 +59,16 @@
   --font-logo: 'Rajdhani', system-ui, sans-serif;
 }
 
+/* Tailwind v4's bare `border` utility defaults to currentColor (the text color),
+   which renders heavy, dark lines. The product sets the default border + outline
+   color to the light tokens in its base layer — replicate that here. */
+@layer base {
+  * {
+    border-color: var(--border);
+    outline-color: var(--ring);
+  }
+}
+
 html,
 body,
 #root {
