@@ -23,6 +23,12 @@ export interface PreviewPerson {
 
 export type Severity = 'critical' | 'minor';
 
+/** One row revealed when a group issue's "see more" is expanded. */
+export interface AffectedItem {
+  primary: string;
+  secondary?: string;
+}
+
 export interface FixIssue {
   id: string;
   severity: Severity;
@@ -30,6 +36,8 @@ export interface FixIssue {
   desc: string;
   fix?: boolean;
   personId?: string;
+  /** Group issues (not tied to one named person) reveal their members on expand. */
+  affected?: { cta: string; items: AffectedItem[] };
 }
 
 /** The columns Dalgo reads from the uploaded CSV (names must match the data — no mapping). */
@@ -81,6 +89,14 @@ export const ISSUES: FixIssue[] = [
     title: '3 rows have no email',
     desc: 'Those rows can’t be matched to anyone, so they’re ignored. Add an email to each, or remove them.',
     fix: true,
+    affected: {
+      cta: 'See the 3 rows',
+      items: [
+        { primary: 'Row 14', secondary: 'Solapur · Pandharpur · email blank' },
+        { primary: 'Row 22', secondary: 'Pune · Haveli · email blank' },
+        { primary: 'Row 31', secondary: 'Beed · Ashti · D-104 · email blank' },
+      ],
+    },
   },
   {
     id: 'newuser',
@@ -112,17 +128,43 @@ export const ISSUES: FixIssue[] = [
     severity: 'minor',
     title: 'Partial scope on farmer_list',
     desc: 'Some people are scoped to taluka, but farmer_list has only district, so they’ll see the whole district there.',
+    affected: {
+      cta: 'See the 5 people',
+      items: [
+        { primary: 'Rahul Deshmukh', secondary: 'Solapur · Pandharpur, so all of Solapur on farmer_list' },
+        { primary: 'Anita S.', secondary: 'Parner · Ashti, so all of Ahilyanagar and Beed' },
+        { primary: 'Farida K.', secondary: 'Beed · Ashti, so all of Beed' },
+        { primary: 'Gita M.', secondary: 'Nashik · Niphad, so all of Nashik' },
+        { primary: 'Sunita P.', secondary: 'Dam D-104, so all of Beed' },
+      ],
+    },
   },
   {
     id: 'samecol',
     severity: 'minor',
     title: '“state” column looks unrelated',
     desc: 'A column named state holds application status, not a place, so its values never match the list. Consider excluding that table.',
+    affected: {
+      cta: 'See the values',
+      items: [
+        { primary: 'approved' },
+        { primary: 'pending' },
+        { primary: 'in_review' },
+        { primary: 'rejected' },
+      ],
+    },
   },
   {
     id: 'trim',
     severity: 'minor',
     title: 'Trimmed extra spaces on 2 emails',
     desc: 'We cleaned these automatically, no action needed.',
+    affected: {
+      cta: 'See the 2 emails',
+      items: [
+        { primary: 'anita@atecf.org', secondary: 'had a trailing space' },
+        { primary: 'gita@atecf.org', secondary: 'had a leading space' },
+      ],
+    },
   },
 ];

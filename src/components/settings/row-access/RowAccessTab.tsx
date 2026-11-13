@@ -553,6 +553,7 @@ function IssueGroup({
   issues: FixIssue[];
   dotClass: string;
 }) {
+  const [openId, setOpenId] = useState<string | null>(null);
   if (!issues.length) return null;
   return (
     <div>
@@ -560,24 +561,62 @@ function IssueGroup({
         {label}
       </div>
       <div className="divide-y">
-        {issues.map((issue) => (
-          <div key={issue.id} className="flex items-start gap-2.5 py-3 first:pt-0">
-            <span className={cn('mt-1.5 size-2 shrink-0 rounded-full', dotClass)} />
-            <div>
-              <p className="text-sm font-medium">{issue.title}</p>
-              <p className="mt-0.5 text-sm text-muted-foreground">{issue.desc}</p>
-              {issue.fix && (
-                <button
-                  type="button"
-                  className="mt-2 cursor-pointer rounded-md border px-2 py-1 text-xs text-muted-foreground hover:bg-muted"
-                  data-testid={`row-access-fix-${issue.id}`}
-                >
-                  Fix in sheet
-                </button>
-              )}
+        {issues.map((issue) => {
+          const open = openId === issue.id;
+          return (
+            <div key={issue.id} className="flex items-start gap-2.5 py-3 first:pt-0">
+              <span className={cn('mt-1.5 size-2 shrink-0 rounded-full', dotClass)} />
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-medium">{issue.title}</p>
+                <p className="mt-0.5 text-sm text-muted-foreground">{issue.desc}</p>
+
+                {issue.affected && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => setOpenId(open ? null : issue.id)}
+                      aria-expanded={open}
+                      className="mt-2 flex cursor-pointer items-center gap-1 text-xs font-medium text-foreground/80 hover:text-foreground"
+                      data-testid={`row-access-seemore-${issue.id}`}
+                    >
+                      {open ? 'Hide' : issue.affected.cta}
+                      <ChevronRight
+                        className={cn('size-3 transition-transform', open && 'rotate-90')}
+                      />
+                    </button>
+                    {open && (
+                      <ul
+                        className="mt-2 space-y-2 rounded-md border bg-muted/30 p-2.5"
+                        data-testid={`row-access-affected-${issue.id}`}
+                      >
+                        {issue.affected.items.map((it) => (
+                          <li key={it.primary} className="text-xs leading-snug">
+                            <span className="font-medium">{it.primary}</span>
+                            {it.secondary && (
+                              <span className="mt-0.5 block text-muted-foreground">
+                                {it.secondary}
+                              </span>
+                            )}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </>
+                )}
+
+                {issue.fix && (
+                  <button
+                    type="button"
+                    className="mt-2 cursor-pointer rounded-md border px-2 py-1 text-xs text-muted-foreground hover:bg-muted"
+                    data-testid={`row-access-fix-${issue.id}`}
+                  >
+                    Fix in sheet
+                  </button>
+                )}
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
