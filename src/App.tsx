@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { RowAccessTab } from '@/components/settings/row-access/RowAccessTab';
+import { cn } from '@/lib/utils';
 
 const TAB_TRIGGER_CLASS =
   'relative bg-transparent border-0 shadow-none rounded-none px-1 py-2.5 text-sm font-medium uppercase tracking-wide text-gray-500 cursor-pointer data-[state=active]:text-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none after:absolute after:bottom-0 after:left-0 after:right-0 after:h-0.5 after:bg-transparent data-[state=active]:after:bg-primary';
@@ -86,6 +87,72 @@ function PlaceholderTab({ name }: { name: string }) {
   );
 }
 
+/** Roles summary — shows that row access makes members view-only (feedback from the team). */
+function RolesView() {
+  const roles = [
+    {
+      role: 'Admin',
+      rows: 'All rows',
+      can: 'Everything: manage access, create and edit',
+      viewOnly: false,
+    },
+    {
+      role: 'Analyst',
+      rows: 'All rows',
+      can: 'Create and edit; always sees every row',
+      viewOnly: false,
+    },
+    {
+      role: 'Member',
+      rows: 'Only their own rows (set by row access)',
+      can: 'Open dashboards, charts, KPIs and reports',
+      viewOnly: true,
+    },
+  ];
+
+  return (
+    <div>
+      <div className="overflow-hidden rounded-lg border bg-background">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b bg-muted/30 text-left text-xs uppercase tracking-wide text-muted-foreground">
+              <th className="px-4 py-2.5 font-medium">Role</th>
+              <th className="px-4 py-2.5 font-medium">Rows they see</th>
+              <th className="px-4 py-2.5 font-medium">What they can do</th>
+            </tr>
+          </thead>
+          <tbody>
+            {roles.map((r) => (
+              <tr
+                key={r.role}
+                className={cn('border-b last:border-0', r.viewOnly && 'bg-primary/5')}
+                data-testid={`role-row-${r.role.toLowerCase()}`}
+              >
+                <td className="px-4 py-3 align-top">
+                  <div className="flex items-center gap-2">
+                    <span className="font-medium">{r.role}</span>
+                    {r.viewOnly && (
+                      <span className="inline-flex items-center rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary">
+                        View only
+                      </span>
+                    )}
+                  </div>
+                </td>
+                <td className="px-4 py-3 align-top text-muted-foreground">{r.rows}</td>
+                <td className="px-4 py-3 align-top text-muted-foreground">{r.can}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="mt-3 text-sm text-muted-foreground">
+        Row Level Security makes members <span className="font-medium text-foreground">view-only</span>:
+        they can’t create or edit. Admins and Analysts always see every row.
+      </p>
+    </div>
+  );
+}
+
 type AccessTab = 'people' | 'groups' | 'roles' | 'rowaccess';
 
 /** The Access page: four tabs, Row access is the live prototype. */
@@ -121,7 +188,7 @@ function AccessPage() {
                 Roles
               </TabsTrigger>
               <TabsTrigger value="rowaccess" className={TAB_TRIGGER_CLASS}>
-                Row access
+                Row Level Security
               </TabsTrigger>
             </TabsList>
           </div>
@@ -135,7 +202,7 @@ function AccessPage() {
             <PlaceholderTab name="Groups" />
           </TabsContent>
           <TabsContent value="roles" className="mt-0 h-full">
-            <PlaceholderTab name="Roles" />
+            <RolesView />
           </TabsContent>
           <TabsContent value="rowaccess" className="mt-0 h-full">
             <RowAccessTab />

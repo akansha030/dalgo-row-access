@@ -2,23 +2,21 @@
 
 import { Fragment, useRef, useState } from 'react';
 import {
-  ArrowUpDown,
+  AlertTriangle,
   ArrowUpRight,
   ChevronRight,
+  Download,
   Eye,
   FileText,
-  ListFilter,
   Lock,
   Search,
   Upload,
+  X,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { toastInfo, toastError } from '@/lib/toast';
+import { toastInfo, toastSuccess } from '@/lib/toast';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { TablePagination } from '@/components/notifications/TablePagination';
-import { PAGE_SIZE_OPTIONS } from '@/constants/notifications';
 import {
   PEOPLE,
   ISSUES,
@@ -28,26 +26,49 @@ import {
   type PreviewPerson,
   type PersonStatus,
   type FixIssue,
+  type Severity,
 } from './row-access-data';
 
-type Stage = 'setup' | 'preview' | 'saved';
+/**
+ * Row Level Security — v2 (per the 16 Nov design-feedback meeting).
+ * Alerts-first, blocking-gated flow: upload → blocking checks (halt if any) →
+ * funnel review (summary + alerts over a searchable member list, Preview-as-User)
+ * → Save & Proceed → Saved (live, with an org on/off toggle).
+ */
 
-const STAGES: { id: Stage; label: string }[] = [
-  { id: 'setup', label: 'Set up' },
-  { id: 'preview', label: 'Preview' },
-  { id: 'saved', label: 'Saved' },
+type Stage = 'setup' | 'review' | 'saved';
+
+/** Prototype-only demo flows — each pill jumps to a scenario's starting point. */
+type FlowId = 'start' | 'blocked' | 'review' | 'live';
+const FLOWS: { id: FlowId; label: string }[] = [
+  { id: 'start', label: 'Start' },
+  { id: 'blocked', label: 'File has errors' },
+  { id: 'review', label: 'Ideal' },
+  { id: 'live', label: 'Live' },
 ];
 
+/** The draft has two views: the raw file (before) and the resolved preview (after). */
+type DraftView = 'file' | 'preview';
+
 const RLS_DESCRIPTION =
-  'Let each member see only their own rows on shared dashboards a district officer opens the org dashboard and sees only their district.';
+  'Members see only the rows you assign them on shared dashboards, so a district officer opens the org dashboard and sees only their own district.';
 
 const DEFAULT_FILE = 'district-officers-row-access.csv';
-const CRITICAL_COUNT = ISSUES.filter((i) => i.severity === 'critical').length;
+const BLOCKING_COUNT = ISSUES.filter((i) => i.severity === 'blocking').length;
+
+const SEVERITY_META: Record<Severity, { label: string; dot: string }> = {
+  blocking: { label: 'Blocking', dot: 'bg-red-500' },
+  warning: { label: 'Warning', dot: 'bg-amber-500' },
+  info: { label: 'Info', dot: 'bg-sky-500' },
+};
 
 export function RowAccessTab() {
   const [stage, setStage] = useState<Stage>('setup');
-  const [uploaded, setUploaded] = useState(false);
+  const [enabled, setEnabled] = useState(false);
+  const [blocked, setBlocked] = useState(false);
+  const [draftView, setDraftView] = useState<DraftView>('file');
   const [fileName, setFileName] = useState(DEFAULT_FILE);
+  const [flow, setFlow] = useState<FlowId>('start');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const openFilePicker = () => fileInputRef.current?.click();
@@ -55,10 +76,51 @@ export function RowAccessTab() {
     const file = e.target.files?.[0];
     if (file) {
       setFileName(file.name);
-      setUploaded(true);
-      setStage('setup');
+      setBlocked(false); // clean upload in the prototype — straight to the draft
+      setDraftView('file'); // show the file's contents first (the "before")
+      setStage('review');
+      setFlow('review');
     }
     e.target.value = '';
+  };
+
+  // Prototype flow pills jump straight to a scenario's starting state.
+  const applyFlow = (id: FlowId) => {
+    setFlow(id);
+    setFileName(DEFAULT_FILE);
+    setDraftView('file');
+    switch (id) {
+      case 'start':
+        setEnabled(false);
+        setStage('setup');
+        setBlocked(false);
+        break;
+      case 'review': // Ideal — begin at the upload step, toggle on, ready to choose a file
+        setEnabled(true);
+        setStage('setup');
+        setBlocked(false);
+        break;
+      case 'blocked':
+        setEnabled(true);
+        setStage('review');
+        setBlocked(true);
+        break;
+      case 'live':
+        setEnabled(true);
+        setStage('saved');
+        setBlocked(false);
+        break;
+    }
+  };
+
+  // In the draft / blocked header, turning the toggle off disables and returns to setup.
+  const disableFromDraft = (next: boolean) => {
+    if (!next) {
+      setEnabled(false);
+      setStage('setup');
+      setFlow('start');
+      setDraftView('file');
+    }
   };
 
   return (
@@ -72,67 +134,103 @@ export function RowAccessTab() {
         data-testid="row-access-file-input"
       />
 
-      {/* Prototype-only stage switcher */}
-      <div className="mb-4 flex items-center justify-end gap-1 text-xs text-muted-foreground">
-        <span className="mr-1">Stage</span>
-        {STAGES.map((s) => (
-          <button
-            key={s.id}
-            type="button"
-            onClick={() => setStage(s.id)}
-            data-testid={`row-access-stage-${s.id}`}
-            className={cn(
-              'cursor-pointer rounded border px-2 py-1',
-              stage === s.id ? 'border-primary text-primary' : 'hover:bg-muted',
-            )}
-          >
-            {s.label}
-          </button>
-        ))}
-      </div>
-
-      {stage === 'setup' &&
-        (uploaded ? (
-          <ColumnsStage
+      {stage === 'setup' && (
+        <UploadStage enabled={enabled} onToggle={setEnabled} onChoose={openFilePicker} />
+      )}
+      {stage === 'review' &&
+        (blocked ? (
+          <BlockedGate
             fileName={fileName}
+            enabled={enabled}
+            onToggle={disableFromDraft}
             onReplace={openFilePicker}
-            onPreview={() => setStage('preview')}
+            onReupload={openFilePicker}
           />
         ) : (
-          <UploadStage onChoose={openFilePicker} />
+          <FunnelReview
+            fileName={fileName}
+            draftView={draftView}
+            enabled={enabled}
+            onToggle={disableFromDraft}
+            onShowFile={() => setDraftView('file')}
+            onShowPreview={() => setDraftView('preview')}
+            onReplace={openFilePicker}
+            onSaveProceed={() => {
+              setStage('saved');
+              setFlow('live');
+            }}
+          />
         ))}
-      {stage === 'preview' && (
-        <PreviewStage
-          fileName={fileName}
-          onReplace={openFilePicker}
-          onBack={() => setStage('setup')}
-          onSave={() => setStage('saved')}
-        />
-      )}
-      {stage === 'saved' && <SavedStage fileName={fileName} onReplace={openFilePicker} />}
+      {stage === 'saved' && <SavedState fileName={fileName} onReplace={openFilePicker} />}
+
+      <FlowSwitcher active={flow} onSelect={applyFlow} />
     </div>
   );
 }
 
-/** Row access heading + description — shared across stages. */
+/** Prototype-only flow switcher — floats at bottom-centre, jumps between demo scenarios. */
+function FlowSwitcher({ active, onSelect }: { active: FlowId; onSelect: (id: FlowId) => void }) {
+  return (
+    <div className="pointer-events-none fixed inset-x-0 bottom-5 z-40 flex justify-center px-4">
+      <div className="pointer-events-auto flex items-center gap-1 rounded-full border bg-background/95 p-1 shadow-lg backdrop-blur">
+        <span className="px-2 text-xs font-medium text-muted-foreground">Flow</span>
+        {FLOWS.map((f) => (
+          <button
+            key={f.id}
+            type="button"
+            onClick={() => onSelect(f.id)}
+            data-testid={`row-access-flow-${f.id}`}
+            className={cn(
+              'cursor-pointer rounded-full px-3 py-1.5 text-xs font-medium transition-colors',
+              active === f.id ? 'bg-foreground text-background' : 'text-muted-foreground hover:bg-muted',
+            )}
+          >
+            {f.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** Feature heading + description — shared across stages. */
 function RlsHeader() {
   return (
     <>
-      <h2 className="text-xl font-semibold">Row access</h2>
+      <h2 className="text-xl font-semibold">Row Level Security</h2>
       <p className="mt-1 max-w-4xl text-sm text-muted-foreground">{RLS_DESCRIPTION}</p>
     </>
   );
 }
 
-/** The uploaded-file row with a Replace file action (opens the file picker). */
-function FileRow({ fileName, onReplace }: { fileName: string; onReplace: () => void }) {
+/** The uploaded-file row: Replace file always; Download only once saved. */
+function FileRow({
+  fileName,
+  onReplace,
+  showDownload = false,
+}: {
+  fileName: string;
+  onReplace: () => void;
+  showDownload?: boolean;
+}) {
   return (
-    <div className="mt-5 flex items-center gap-3 rounded-lg border bg-muted/30 px-4 py-3">
+    <div className="flex items-center gap-3 rounded-lg border bg-muted/30 px-4 py-3">
       <FileText className="size-5 shrink-0 text-muted-foreground" />
       <div className="flex-1">
         <span className="text-sm font-semibold">{fileName}</span>
         <span className="ml-2 text-sm text-muted-foreground">46 rows</span>
       </div>
+      {showDownload && (
+        <a
+          href={`${import.meta.env.BASE_URL}row-access-template.csv`}
+          download
+          aria-label="Download the file"
+          data-testid="row-access-download-file"
+          className="inline-grid size-8 cursor-pointer place-items-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+        >
+          <Download className="size-4" />
+        </a>
+      )}
       <Button variant="outline" size="sm" onClick={onReplace} data-testid="row-access-replace">
         Replace file
       </Button>
@@ -140,247 +238,562 @@ function FileRow({ fileName, onReplace }: { fileName: string; onReplace: () => v
   );
 }
 
-/** First-time setup: a Choose file button (opens picker) + a CSV template to start from. */
-function UploadStage({ onChoose }: { onChoose: () => void }) {
+/** The "Enable Row Level Security" header, kept across the journey, with the uploaded file below. */
+function EnableCard({
+  enabled,
+  onToggle,
+  fileName,
+  onReplace,
+  showDownload = false,
+}: {
+  enabled: boolean;
+  onToggle: (next: boolean) => void;
+  fileName: string;
+  onReplace: () => void;
+  showDownload?: boolean;
+}) {
+  return (
+    <div className="rounded-lg border bg-background p-6">
+      <div className="flex items-start justify-between gap-6">
+        <div>
+          <h2 className="text-base font-semibold">Enable Row Level Security</h2>
+          <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
+            {RLS_DESCRIPTION} Turning it on makes members view-only.
+          </p>
+        </div>
+        <ToggleSwitch on={enabled} onChange={onToggle} />
+      </div>
+      <div className="mt-6 border-t pt-6">
+        <FileRow fileName={fileName} onReplace={onReplace} showDownload={showDownload} />
+      </div>
+    </div>
+  );
+}
+
+/** First-time setup: an on/off toggle that, when on, reveals the file upload + CSV template. */
+function UploadStage({
+  enabled,
+  onToggle,
+  onChoose,
+}: {
+  enabled: boolean;
+  onToggle: (next: boolean) => void;
+  onChoose: () => void;
+}) {
   return (
     <div className="rounded-lg border bg-background p-6" data-testid="row-access-upload">
-      <RlsHeader />
-
-      <div className="mt-5">
-        <Button variant="primary" onClick={onChoose} data-testid="row-access-choose-file">
-          <Upload className="mr-2 size-4" />
-          Choose file
-        </Button>
+      <div className="flex items-start justify-between gap-6">
+        <div>
+          <h2 className="text-base font-semibold">Enable Row Level Security</h2>
+          <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
+            {RLS_DESCRIPTION} Turning it on makes members view-only.
+          </p>
+        </div>
+        <ToggleSwitch on={enabled} onChange={onToggle} />
       </div>
 
-      <p className="mt-4 text-sm text-muted-foreground">
-        The template is a CSV with your members already filled in and the columns Dalgo needs.{' '}
-        <button
-          type="button"
-          className="cursor-pointer font-medium text-primary hover:underline"
-          data-testid="row-access-download-template"
-        >
-          Download template
-        </button>
+      {enabled && (
+        <div className="mt-6 border-t pt-6" data-testid="row-access-upload-reveal">
+          <Button variant="primary" onClick={onChoose} data-testid="row-access-choose-file">
+            <Upload className="mr-2 size-4" />
+            Choose file
+          </Button>
+
+          <p className="mt-4 text-sm text-muted-foreground">
+            The template is a CSV with your members already filled in and the columns Dalgo needs.{' '}
+            <a
+              href={`${import.meta.env.BASE_URL}row-access-template.csv`}
+              download
+              className="cursor-pointer font-medium text-primary hover:underline"
+              data-testid="row-access-download-template"
+            >
+              Download template
+            </a>
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Blocking gate: if any blocking checks fail, show only those and halt the flow. */
+function BlockedGate({
+  fileName,
+  enabled,
+  onToggle,
+  onReplace,
+  onReupload,
+}: {
+  fileName: string;
+  enabled: boolean;
+  onToggle: (next: boolean) => void;
+  onReplace: () => void;
+  onReupload: () => void;
+}) {
+  const blocking = ISSUES.filter((i) => i.severity === 'blocking');
+  const [openId, setOpenId] = useState<string | null>(null);
+  const one = blocking.length === 1;
+
+  return (
+    <div data-testid="row-access-blocked">
+      <EnableCard enabled={enabled} onToggle={onToggle} fileName={fileName} onReplace={onReplace} />
+
+      <div className="mt-6 rounded-lg border border-red-200 bg-red-50/60 p-6">
+        <div className="flex items-center gap-2">
+          <AlertTriangle className="size-5 shrink-0 text-red-600" />
+          <h3 className="text-base font-semibold">
+            Fix {one ? 'this' : `these ${blocking.length}`} before you can continue
+          </h3>
+        </div>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Row level security can’t be set up until {one ? 'it’s' : 'they’re'} fixed. Fix{' '}
+          {one ? 'it' : 'them'} in your sheet and re-upload.
+        </p>
+        <div className="mt-4 divide-y rounded-lg border bg-background">
+          {blocking.map((issue) => (
+            <div key={issue.id} className="p-4">
+              <AlertItem
+                issue={issue}
+                open={openId === issue.id}
+                onToggle={() => setOpenId(openId === issue.id ? null : issue.id)}
+              />
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="mt-6 flex flex-wrap items-center gap-3">
+        <Button variant="primary" onClick={onReupload} data-testid="row-access-blocked-reupload">
+          <Upload className="mr-2 size-4" />
+          Re-upload fixed file
+        </Button>
+        <p className="text-sm text-muted-foreground">
+          You can’t preview access until {one ? 'it’s' : 'these are'} fixed.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The review (Draft) — two sequential steps:
+ *   Step 1 (file): the uploaded list as typed, with a single Preview CTA.
+ *   Step 2 (preview): summary + alert summary, then the applied member preview.
+ */
+function FunnelReview({
+  fileName,
+  draftView,
+  enabled,
+  onToggle,
+  onShowFile,
+  onShowPreview,
+  onReplace,
+  onSaveProceed,
+}: {
+  fileName: string;
+  draftView: DraftView;
+  enabled: boolean;
+  onToggle: (next: boolean) => void;
+  onShowFile: () => void;
+  onShowPreview: () => void;
+  onReplace: () => void;
+  onSaveProceed: () => void;
+}) {
+  const header = (
+    <EnableCard enabled={enabled} onToggle={onToggle} fileName={fileName} onReplace={onReplace} />
+  );
+
+  // Step 1 — the uploaded file (before). One CTA: Preview.
+  if (draftView === 'file') {
+    return (
+      <div data-testid="row-access-review">
+        {header}
+        <div className="mt-6 rounded-lg border bg-background p-6">
+          <h3 className="text-base font-semibold">The list you uploaded</h3>
+          <p className="mt-0.5 text-sm text-muted-foreground">
+            What’s in the file, before row access is applied.
+          </p>
+          <div className="mt-4">
+            <FileContentTable />
+          </div>
+        </div>
+        <div className="mt-6">
+          <Button variant="primary" onClick={onShowPreview} data-testid="row-access-preview-cta">
+            <Eye className="mr-2 size-4" />
+            Preview access
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  // Step 2 — summary + alerts, then the applied preview list.
+  const warnings = ISSUES.filter((i) => i.severity === 'warning');
+  const infos = ISSUES.filter((i) => i.severity === 'info');
+  const seeTheirRows = PEOPLE.filter((p) => p.status === 'access').length;
+  const seeEverything = PEOPLE.filter((p) => p.status === 'everything').length;
+  const seeNothing = PEOPLE.filter((p) => p.status === 'nothing').length;
+  const datasets = TABLES.filter((t) => t.cols.length).length;
+
+  return (
+    <div data-testid="row-access-review">
+      {header}
+
+      {/* Summary — what the rule will do */}
+      <div className="mt-6 rounded-lg border bg-background p-6" data-testid="row-access-summary">
+        <h3 className="text-base font-semibold">What this will do</h3>
+        <div className="mt-4 grid grid-cols-3 gap-4">
+          <Stat value={PEOPLE.length} label="Members scoped" />
+          <Stat value={datasets} label="Datasets filtered" />
+          <Stat value={DASHBOARDS.length} label="Dashboards affected" />
+        </div>
+        <div className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-1 text-sm">
+          <span>
+            <span className="font-semibold text-foreground">{seeTheirRows}</span> see their rows
+          </span>
+          <span>
+            <span className="font-semibold text-foreground">{seeEverything}</span> sees everything
+          </span>
+          {seeNothing > 0 && (
+            <span className="text-amber-700">
+              <span className="font-semibold">{seeNothing}</span> see nothing
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* Alert summary — refined into the consequence hierarchy next */}
+      <div className="mt-6 rounded-lg border bg-background p-6" data-testid="row-access-alerts">
+        <h3 className="text-base font-semibold">Alerts</h3>
+        <p className="mt-0.5 text-sm text-muted-foreground">
+          Nothing here blocks you. Fix in your sheet and re-upload, or accept and continue.
+        </p>
+        <div className="mt-4 space-y-5">
+          <AlertSection severity="warning" issues={warnings} />
+          <AlertSection severity="info" issues={infos} />
+        </div>
+      </div>
+
+      {/* The applied preview list */}
+      <div className="mt-6 rounded-lg border bg-background p-6">
+        <h3 className="text-base font-semibold">Preview</h3>
+        <p className="mt-0.5 text-sm text-muted-foreground">
+          What each member sees once row access is on.
+        </p>
+        <div className="mt-4">
+          <PreviewList />
+        </div>
+      </div>
+
+      <div className="mt-6 flex flex-wrap items-center gap-3">
+        <Button variant="outline" onClick={onShowFile} data-testid="row-access-back">
+          Back
+        </Button>
+        <Button variant="primary" onClick={onSaveProceed} data-testid="row-access-save-proceed">
+          Save &amp; Proceed
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+/** The raw uploaded list — one row per member, the scope columns exactly as typed (the "before"). */
+function FileContentTable() {
+  const cols = DETECTED_COLUMNS.filter((c) => c.role === 'filter');
+  const rows = PEOPLE.filter((p) => p.inFile);
+  return (
+    <div className="overflow-x-auto rounded-lg border" data-testid="row-access-file-table">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="border-b bg-muted/40 text-left text-xs uppercase tracking-wide text-muted-foreground">
+            <th className="px-4 py-2.5 font-medium">Member</th>
+            {cols.map((c) => (
+              <th key={c.name} className="px-4 py-2.5 font-mono text-xs font-medium normal-case">
+                {c.name}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((p) => (
+            <tr key={p.id} className="border-b last:border-0" data-testid={`row-access-file-row-${p.id}`}>
+              <td className="px-4 py-3 align-top">
+                <div className="font-medium">{p.name}</div>
+                <div className="text-xs text-muted-foreground">{p.email}</div>
+              </td>
+              {cols.map((c) => {
+                const v = p.file?.[c.name as 'district' | 'taluka' | 'dam_id'] ?? '';
+                return (
+                  <td key={c.name} className="px-4 py-3 align-top font-mono text-xs">
+                    {v === '' ? (
+                      <span className="italic text-muted-foreground/60">blank</span>
+                    ) : v === '*' ? (
+                      <span className="text-muted-foreground">* (all)</span>
+                    ) : (
+                      v
+                    )}
+                  </td>
+                );
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p className="border-t bg-muted/20 px-4 py-2 text-xs text-muted-foreground">
+        Shown as uploaded. <span className="font-mono">*</span> means all, a blank cell means none.
       </p>
     </div>
   );
 }
 
-/** After upload: show the columns Dalgo will use (read-only), then preview. No mapping (spec §2/§8). */
-function ColumnsStage({
-  fileName,
-  onReplace,
-  onPreview,
-}: {
-  fileName: string;
-  onReplace: () => void;
-  onPreview: () => void;
-}) {
+/** Saved (live): the on/off toggle (with confirmation) + the live member list. */
+function SavedState({ fileName, onReplace }: { fileName: string; onReplace: () => void }) {
+  const [enabled, setEnabled] = useState(true);
+  const [confirmOff, setConfirmOff] = useState(false);
+  const seeNothing = PEOPLE.filter((p) => p.status === 'nothing').length;
+
+  const handleToggle = (next: boolean) => {
+    if (next) {
+      setEnabled(true);
+      toastSuccess.generic('Row level security turned on');
+    } else {
+      setConfirmOff(true);
+    }
+  };
+
   return (
-    <div className="rounded-lg border bg-background p-6" data-testid="row-access-columns">
-      <RlsHeader />
-      <FileRow fileName={fileName} onReplace={onReplace} />
+    <div data-testid="row-access-saved">
+      <EnableCard
+        enabled={enabled}
+        onToggle={handleToggle}
+        fileName={fileName}
+        onReplace={onReplace}
+        showDownload
+      />
 
-      <div className="mt-6">
-        <h3 className="text-base font-semibold">Columns Dalgo will use</h3>
-        <p className="mt-0.5 max-w-2xl text-sm text-muted-foreground">
-          Dalgo reads these straight from your file, so the names must match your data. People are
-          matched by their email; the rest filter the rows they see.
-        </p>
-        <div className="mt-4 flex flex-wrap gap-2">
-          {DETECTED_COLUMNS.map((c) => (
-            <span
-              key={c.name}
-              className="inline-flex items-center gap-2 rounded-md border bg-muted/30 px-3 py-1.5 text-sm"
-              data-testid={`row-access-col-${c.name}`}
-            >
-              <span className="font-mono text-xs">{c.name}</span>
-              <span
-                className={cn(
-                  'rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide',
-                  c.role === 'who' ? 'bg-primary/10 text-primary' : 'bg-background text-muted-foreground',
-                )}
-              >
-                {c.role}
-              </span>
+      {enabled && (
+        <>
+          <div
+            className="mt-6 flex flex-wrap items-center gap-2 text-sm text-muted-foreground"
+            data-testid="row-access-saved-summary"
+          >
+            <span className="rounded-full bg-primary/10 px-2.5 py-0.5 text-xs font-semibold text-primary">
+              Live
             </span>
-          ))}
-        </div>
-      </div>
+            <span>·</span>
+            <span className="font-medium text-foreground">{PEOPLE.length} members</span>
+            <span>·</span>
+            <span>scoped to district · taluka · dam_id</span>
+            {seeNothing > 0 && (
+              <>
+                <span>·</span>
+                <span className="text-amber-700">{seeNothing} see nothing</span>
+              </>
+            )}
+          </div>
+          <div className="mt-3 rounded-lg border bg-background p-6">
+            <h3 className="mb-3 text-base font-semibold">Preview</h3>
+            <PreviewList />
+          </div>
+        </>
+      )}
 
-      <div className="mt-6">
-        <Button variant="outline" onClick={onPreview} data-testid="row-access-preview-btn">
-          Preview
-        </Button>
-      </div>
+      {confirmOff && (
+        <ConfirmDialog
+          title="Turn off row level security?"
+          body="Every member will see all rows on shared dashboards again. Your configuration file is kept, so you can turn it back on later."
+          confirmLabel="Turn off"
+          onCancel={() => setConfirmOff(false)}
+          onConfirm={() => {
+            setEnabled(false);
+            setConfirmOff(false);
+            toastInfo.generic('Row level security turned off. Every member can see all rows again.');
+          }}
+        />
+      )}
     </div>
   );
 }
 
-// Keeps the Preview list and the Needs attention panel the same height (bottoms aligned).
-const PREVIEW_PANE_HEIGHT = 'lg:h-[520px]';
+/** The applied preview — a table of each member, what they see, and a Preview-as-user action. */
+function PreviewList() {
+  const [q, setQ] = useState('');
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [picker, setPicker] = useState<PreviewPerson | null>(null);
+  const [view, setView] = useState<{
+    person: PreviewPerson;
+    dashboard: string;
+    filtered: boolean;
+  } | null>(null);
 
-function PreviewStage({
-  fileName,
-  onReplace,
-  onBack,
-  onSave,
-}: {
-  fileName: string;
-  onReplace: () => void;
-  onBack: () => void;
-  onSave: () => void;
-}) {
+  const needle = q.trim().toLowerCase();
+  const matches = needle
+    ? PEOPLE.filter(
+        (p) => p.name.toLowerCase().includes(needle) || p.email.toLowerCase().includes(needle),
+      )
+    : PEOPLE;
+
   return (
-    <div data-testid="row-access-preview">
-      <div className="rounded-lg border bg-background p-6">
-        <RlsHeader />
-        <FileRow fileName={fileName} onReplace={onReplace} />
+    <div>
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+        <span className="text-sm text-muted-foreground">{PEOPLE.length} members</span>
+        <SearchBox value={q} onChange={setQ} />
       </div>
 
       <div
-        className={cn(
-          'mt-6 grid grid-cols-1 gap-6 lg:grid-cols-[1fr_340px] lg:items-stretch',
-          PREVIEW_PANE_HEIGHT,
-        )}
+        className="overflow-x-auto rounded-lg border bg-background"
+        data-testid="row-access-member-list"
       >
-        <div className="flex min-h-0 flex-col">
-          <div className="mb-3 flex items-center justify-between gap-4">
-            <h3 className="text-base font-semibold">Preview list</h3>
-            <SearchBox />
-          </div>
-          <div className="min-h-0 flex-1">
-            <PreviewTable />
-          </div>
-        </div>
-
-        {/* Needs attention — tiered Critical / Minor */}
-        <aside
-          className="flex min-h-0 flex-col rounded-lg border bg-background p-5"
-          data-testid="row-access-needs-attention"
-        >
-          <h3 className="text-base font-semibold">Needs attention</h3>
-          <p className="mt-1 text-sm text-muted-foreground">
-            3 people will see nothing. Fix the critical items in your sheet and re-upload.
-          </p>
-          <div className="mt-4 min-h-0 flex-1 space-y-5 overflow-y-auto pr-1">
-            <IssueGroup
-              label="Critical"
-              dotClass="bg-red-500"
-              issues={ISSUES.filter((i) => i.severity === 'critical')}
-            />
-            <IssueGroup
-              label="Minor"
-              dotClass="bg-amber-500"
-              issues={ISSUES.filter((i) => i.severity === 'minor')}
-            />
-            <div className="rounded-md border border-dashed bg-muted/30 p-3 text-xs leading-relaxed text-muted-foreground">
-              <span className="font-medium text-foreground">Not shown here:</span> problems that
-              appear after you save (a member who joins later and isn’t in the list, or data that
-              changes) reach you as a notification, not a flag on this screen.
-            </div>
-          </div>
-        </aside>
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b bg-muted/40 text-left text-xs uppercase tracking-wide text-muted-foreground">
+              <th className="px-4 py-2.5 font-medium">Member</th>
+              <th className="px-4 py-2.5 font-medium">Sees</th>
+              <th className="px-4 py-2.5 font-medium">Status</th>
+              <th className="px-4 py-2.5 text-right font-medium">Preview</th>
+            </tr>
+          </thead>
+          <tbody>
+            {matches.map((p) => (
+              <Fragment key={p.id}>
+                <tr className="border-b last:border-0" data-testid={`row-access-member-${p.id}`}>
+                  <td className="px-4 py-3 align-top">
+                    <button
+                      type="button"
+                      onClick={() => setExpandedId(expandedId === p.id ? null : p.id)}
+                      className="flex cursor-pointer items-start gap-2 text-left"
+                    >
+                      <ChevronRight
+                        className={cn(
+                          'mt-0.5 size-4 shrink-0 text-muted-foreground transition-transform',
+                          expandedId === p.id && 'rotate-90',
+                        )}
+                      />
+                      <span className="min-w-0">
+                        <span className="block font-medium">{p.name}</span>
+                        <span className="block text-xs text-muted-foreground">{p.role}</span>
+                      </span>
+                    </button>
+                  </td>
+                  <td className="px-4 py-3 align-top text-muted-foreground">{p.view}</td>
+                  <td className="px-4 py-3 align-top">
+                    <StatusBadge status={p.status} />
+                  </td>
+                  <td className="px-4 py-3 text-right align-top">
+                    <button
+                      type="button"
+                      onClick={() => setPicker(p)}
+                      aria-label={`Preview as ${p.name}`}
+                      data-testid={`row-access-previewas-${p.id}`}
+                      className="inline-grid size-8 cursor-pointer place-items-center rounded-md border text-muted-foreground hover:bg-muted hover:text-foreground"
+                    >
+                      <Eye className="size-4" />
+                    </button>
+                  </td>
+                </tr>
+                {expandedId === p.id && (
+                  <tr>
+                    <td colSpan={4} className="p-0">
+                      <RowDetail person={p} />
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
+            ))}
+            {matches.length === 0 && (
+              <tr>
+                <td colSpan={4} className="px-4 py-10 text-center text-sm text-muted-foreground">
+                  No members match “{q}”.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
       </div>
 
-      <div className="mt-6 flex items-center gap-3">
-        <Button variant="outline" onClick={onBack} data-testid="row-access-back">
-          Back
-        </Button>
-        <Button
-          variant="primary"
-          className={cn('uppercase', CRITICAL_COUNT > 0 && 'opacity-50')}
-          onClick={() =>
-            CRITICAL_COUNT > 0
-              ? toastError.api(null, `Fix the ${CRITICAL_COUNT} critical issues before you can save`)
-              : onSave()
-          }
-          data-testid="row-access-save"
-        >
-          Save
-        </Button>
-      </div>
+      {picker && (
+        <PreviewPicker
+          person={picker}
+          onClose={() => setPicker(null)}
+          onPick={(dashboard, filtered) => {
+            setView({ person: picker, dashboard, filtered });
+            setPicker(null);
+          }}
+        />
+      )}
+      {view && <ViewingAsDashboard target={view} onClose={() => setView(null)} />}
     </div>
   );
 }
 
-function SavedStage({ fileName, onReplace }: { fileName: string; onReplace: () => void }) {
-  return (
-    <div data-testid="row-access-saved">
-      <div className="rounded-lg border bg-background p-6">
-        <RlsHeader />
-        <FileRow fileName={fileName} onReplace={onReplace} />
-      </div>
-
-      <div className="mt-6 mb-3 flex items-center justify-between gap-4">
-        <h3 className="text-base font-semibold">Preview list</h3>
-        <SearchBox />
-      </div>
-      <div className="mb-3 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
-        <span className="rounded-full bg-primary/10 px-2.5 py-0.5 text-xs font-semibold text-primary">
-          On
-        </span>
-        <span>·</span>
-        <span className="font-medium text-foreground">12 people</span>
-        <span>·</span>
-        <span>8 see their rows</span>
-        <span>·</span>
-        <span>1 sees everything</span>
-        <span>·</span>
-        <span className="text-amber-700">3 see nothing</span>
-      </div>
-      <PreviewTable />
-
-      <div className="mt-6 flex items-center gap-3">
-        <Button variant="primary" className="uppercase" disabled data-testid="row-access-save-disabled">
-          Save
-        </Button>
-        <Button
-          variant="outline"
-          onClick={() => toastInfo.generic('Row access turned off. Every member can see all rows again.')}
-          data-testid="row-access-turn-off"
-        >
-          Turn off row access
-        </Button>
-      </div>
-    </div>
-  );
-}
-
-function SearchBox() {
-  return (
-    <div className="relative w-64">
-      <Search className="absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-      <Input placeholder="search users" className="pl-8" data-testid="row-access-search" />
-    </div>
-  );
-}
-
-function StatusBadge({ status }: { status: PersonStatus }) {
-  const map: Record<PersonStatus, { label: string; cls: string }> = {
-    access: { label: 'Has access', cls: 'bg-primary/10 text-primary' },
-    everything: { label: 'Sees everything', cls: 'bg-primary/10 text-primary' },
-    nothing: { label: 'Sees nothing', cls: 'bg-muted text-muted-foreground' },
-  };
-  const m = map[status];
-  return (
-    <span className={cn('inline-block rounded-full px-2 py-0.5 text-xs font-medium', m.cls)}>
-      {m.label}
-    </span>
-  );
-}
-
-/** The per-person detail revealed when a row is expanded — tables + dashboards, each previewable. */
-function RowDetail({
+/** The dashboard picker that opens when you click "Preview as user". */
+function PreviewPicker({
   person,
-  onPreview,
+  onClose,
+  onPick,
 }: {
   person: PreviewPerson;
-  onPreview: (dashboard: string, filtered: boolean) => void;
+  onClose: () => void;
+  onPick: (dashboard: string, filtered: boolean) => void;
 }) {
   return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-6"
+      onClick={onClose}
+      data-testid="row-access-preview-picker"
+    >
+      <div
+        className="w-full max-w-md rounded-lg bg-background p-5 shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h3 className="text-base font-semibold">Open a dashboard as {person.name}</h3>
+            <p className="mt-0.5 text-sm text-muted-foreground">
+              Opens in a new tab, scoped to what they can see.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            className="cursor-pointer text-muted-foreground hover:text-foreground"
+          >
+            <X className="size-4" />
+          </button>
+        </div>
+        <div className="mt-4 space-y-2">
+          {DASHBOARDS.map((d) => (
+            <button
+              key={d.name}
+              type="button"
+              onClick={() => onPick(d.name, d.filtered)}
+              className="flex w-full cursor-pointer items-center justify-between gap-2 rounded-md border px-3 py-2.5 text-left text-sm hover:bg-muted"
+            >
+              <span className="flex items-center gap-2">
+                {d.name}
+                {d.filtered ? (
+                  <span className="rounded bg-primary/10 px-1.5 py-0.5 text-xs text-primary">scoped</span>
+                ) : (
+                  <span className="rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
+                    shows full
+                  </span>
+                )}
+              </span>
+              <ArrowUpRight className="size-4 shrink-0 text-muted-foreground" />
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Per-person detail: the tables they query + the dashboards they can open. */
+function RowDetail({ person }: { person: PreviewPerson }) {
+  return (
     <div className="border-t bg-muted/20 px-6 py-4" data-testid={`row-access-detail-${person.id}`}>
+      <p className="mb-3 text-sm text-muted-foreground">{person.reason}</p>
       <div className="grid gap-5 sm:grid-cols-2">
         <div>
           <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
@@ -408,7 +821,7 @@ function RowDetail({
             Dashboards they can open
           </div>
           <ul className="space-y-1.5">
-            {DASHBOARDS.map((d, i) => (
+            {DASHBOARDS.map((d) => (
               <li key={d.name} className="flex items-center gap-2 text-sm">
                 <span className="flex-1">{d.name}</span>
                 {d.filtered ? (
@@ -418,15 +831,6 @@ function RowDetail({
                     shows full
                   </span>
                 )}
-                <button
-                  type="button"
-                  onClick={() => onPreview(d.name, d.filtered)}
-                  aria-label={`Preview ${d.name} as ${person.name}`}
-                  data-testid={`row-access-preview-${person.id}-${i}`}
-                  className="shrink-0 cursor-pointer rounded p-0.5 text-muted-foreground hover:text-foreground"
-                >
-                  <ArrowUpRight className="size-4" />
-                </button>
               </li>
             ))}
           </ul>
@@ -436,193 +840,91 @@ function RowDetail({
   );
 }
 
-/** The shared "who sees what" table — paginated; rows expand to per-dashboard detail + preview. */
-function PreviewTable() {
-  const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState<number>(PAGE_SIZE_OPTIONS[0]);
-  const [view, setView] = useState<{
-    person: PreviewPerson;
-    dashboard: string;
-    filtered: boolean;
-  } | null>(null);
-  const [expandedId, setExpandedId] = useState<string | null>(null);
-
-  const start = (page - 1) * pageSize;
-  const rows = PEOPLE.slice(start, start + pageSize);
-
-  return (
-    <div
-      className="flex h-full min-h-0 flex-col rounded-lg border bg-background"
-      data-testid="row-access-preview-table"
-    >
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        <Table>
-          <TableHeader>
-            <TableRow className="hover:bg-transparent">
-              <TableHead className="w-8 pl-4" />
-              <TableHead>
-                <div className="flex items-center gap-2">
-                  Member
-                  <ArrowUpDown className="size-3.5 text-muted-foreground" />
-                  <ListFilter className="size-3.5 text-muted-foreground" />
-                </div>
-              </TableHead>
-              <TableHead>Sees</TableHead>
-              <TableHead>
-                <div className="flex items-center gap-2">
-                  Rows
-                  <ListFilter className="size-3.5 text-muted-foreground" />
-                </div>
-              </TableHead>
-              <TableHead className="pr-6">Status</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {rows.map((p) => (
-              <Fragment key={p.id}>
-                <TableRow
-                  className="cursor-pointer"
-                  data-testid={`row-access-row-${p.id}`}
-                  onClick={() => setExpandedId(expandedId === p.id ? null : p.id)}
-                >
-                  <TableCell className="pl-4">
-                    <ChevronRight
-                      className={cn(
-                        'size-4 text-muted-foreground transition-transform',
-                        expandedId === p.id && 'rotate-90',
-                      )}
-                    />
-                  </TableCell>
-                  <TableCell>
-                    <div className="font-medium">{p.name}</div>
-                    <div className="text-xs text-muted-foreground">{p.role}</div>
-                  </TableCell>
-                  <TableCell>
-                    {p.state === 'all' ? (
-                      <span className="underline decoration-dotted underline-offset-2">{p.view}</span>
-                    ) : (
-                      <span className={cn(p.state === 'none' && 'text-muted-foreground')}>
-                        {p.view}
-                      </span>
-                    )}
-                  </TableCell>
-                  <TableCell>{p.rows}</TableCell>
-                  <TableCell className="pr-6">
-                    <StatusBadge status={p.status} />
-                  </TableCell>
-                </TableRow>
-                {expandedId === p.id && (
-                  <TableRow className="hover:bg-transparent">
-                    <TableCell colSpan={5} className="p-0">
-                      <RowDetail
-                        person={p}
-                        onPreview={(dashboard, filtered) => setView({ person: p, dashboard, filtered })}
-                      />
-                    </TableCell>
-                  </TableRow>
-                )}
-              </Fragment>
-            ))}
-          </TableBody>
-        </Table>
-      </div>
-
-      <TablePagination
-        count={PEOPLE.length}
-        page={page}
-        pageSize={pageSize}
-        onPageChange={setPage}
-        onPageSizeChange={(size) => {
-          setPageSize(size);
-          setPage(1);
-        }}
-      />
-
-      {view && <ViewingAsDashboard target={view} onClose={() => setView(null)} />}
-    </div>
-  );
-}
-
-/** A severity group in the Needs attention panel (Critical / Minor). */
-function IssueGroup({
-  label,
-  issues,
-  dotClass,
-}: {
-  label: string;
-  issues: FixIssue[];
-  dotClass: string;
-}) {
+/** A tiered alert group (Warning / Info / Blocking) with per-issue "see more". */
+function AlertSection({ severity, issues }: { severity: Severity; issues: FixIssue[] }) {
   const [openId, setOpenId] = useState<string | null>(null);
   if (!issues.length) return null;
+  const meta = SEVERITY_META[severity];
   return (
     <div>
-      <div className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-        {label}
+      <div className="mb-1.5 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+        <span className={cn('size-2 rounded-full', meta.dot)} />
+        {meta.label}
+        <span className="text-muted-foreground/70">({issues.length})</span>
       </div>
       <div className="divide-y">
-        {issues.map((issue) => {
-          const open = openId === issue.id;
-          return (
-            <div key={issue.id} className="flex items-start gap-2.5 py-3 first:pt-0">
-              <span className={cn('mt-1.5 size-2 shrink-0 rounded-full', dotClass)} />
-              <div className="min-w-0 flex-1">
-                <p className="text-sm font-medium">{issue.title}</p>
-                <p className="mt-0.5 text-sm text-muted-foreground">{issue.desc}</p>
-
-                {issue.affected && (
-                  <>
-                    <button
-                      type="button"
-                      onClick={() => setOpenId(open ? null : issue.id)}
-                      aria-expanded={open}
-                      className="mt-2 flex cursor-pointer items-center gap-1 text-xs font-medium text-foreground/80 hover:text-foreground"
-                      data-testid={`row-access-seemore-${issue.id}`}
-                    >
-                      {open ? 'Hide' : issue.affected.cta}
-                      <ChevronRight
-                        className={cn('size-3 transition-transform', open && 'rotate-90')}
-                      />
-                    </button>
-                    {open && (
-                      <ul
-                        className="mt-2 space-y-2 rounded-md border bg-muted/30 p-2.5"
-                        data-testid={`row-access-affected-${issue.id}`}
-                      >
-                        {issue.affected.items.map((it) => (
-                          <li key={it.primary} className="text-xs leading-snug">
-                            <span className="font-medium">{it.primary}</span>
-                            {it.secondary && (
-                              <span className="mt-0.5 block text-muted-foreground">
-                                {it.secondary}
-                              </span>
-                            )}
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </>
-                )}
-
-                {issue.fix && (
-                  <button
-                    type="button"
-                    className="mt-2 cursor-pointer rounded-md border px-2 py-1 text-xs text-muted-foreground hover:bg-muted"
-                    data-testid={`row-access-fix-${issue.id}`}
-                  >
-                    Fix in sheet
-                  </button>
-                )}
-              </div>
-            </div>
-          );
-        })}
+        {issues.map((issue) => (
+          <AlertItem
+            key={issue.id}
+            issue={issue}
+            open={openId === issue.id}
+            onToggle={() => setOpenId(openId === issue.id ? null : issue.id)}
+          />
+        ))}
       </div>
     </div>
   );
 }
 
-/** Previews one dashboard exactly as the chosen member sees it. */
+/** One alert row: title + desc, an optional "see more" list, and a Fix-in-sheet hint. */
+function AlertItem({
+  issue,
+  open,
+  onToggle,
+}: {
+  issue: FixIssue;
+  open: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <div className="py-3 first:pt-0">
+      <p className="text-sm font-medium">{issue.title}</p>
+      <p className="mt-0.5 text-sm text-muted-foreground">{issue.desc}</p>
+
+      {issue.affected && (
+        <>
+          <button
+            type="button"
+            onClick={onToggle}
+            aria-expanded={open}
+            className="mt-2 flex cursor-pointer items-center gap-1 text-xs font-medium text-foreground/80 hover:text-foreground"
+            data-testid={`row-access-seemore-${issue.id}`}
+          >
+            {open ? 'Hide' : issue.affected.cta}
+            <ChevronRight className={cn('size-3 transition-transform', open && 'rotate-90')} />
+          </button>
+          {open && (
+            <ul
+              className="mt-2 space-y-2 rounded-md border bg-muted/30 p-2.5"
+              data-testid={`row-access-affected-${issue.id}`}
+            >
+              {issue.affected.items.map((it) => (
+                <li key={it.primary} className="text-xs leading-snug">
+                  <span className="font-medium">{it.primary}</span>
+                  {it.secondary && (
+                    <span className="mt-0.5 block text-muted-foreground">{it.secondary}</span>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+        </>
+      )}
+
+      {issue.fix && (
+        <button
+          type="button"
+          className="mt-2 cursor-pointer rounded-md border px-2 py-1 text-xs text-muted-foreground hover:bg-muted"
+          data-testid={`row-access-fix-${issue.id}`}
+        >
+          Fix in sheet
+        </button>
+      )}
+    </div>
+  );
+}
+
+/** Simulates opening the dashboard in a new tab, scoped as the chosen member sees it. */
 function ViewingAsDashboard({
   target,
   onClose,
@@ -724,6 +1026,107 @@ function ViewingAsDashboard({
               </div>
             </>
           )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SearchBox({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  return (
+    <div className="relative w-64">
+      <Search className="absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+      <Input
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="Search members"
+        className="pl-8"
+        data-testid="row-access-search"
+      />
+    </div>
+  );
+}
+
+function StatusBadge({ status }: { status: PersonStatus }) {
+  const map: Record<PersonStatus, { label: string; cls: string }> = {
+    access: { label: 'Has access', cls: 'bg-primary/10 text-primary' },
+    everything: { label: 'Sees everything', cls: 'bg-primary/10 text-primary' },
+    nothing: { label: 'Sees nothing', cls: 'bg-muted text-muted-foreground' },
+  };
+  const m = map[status];
+  return (
+    <span
+      className={cn('inline-block shrink-0 rounded-full px-2 py-0.5 text-xs font-medium', m.cls)}
+    >
+      {m.label}
+    </span>
+  );
+}
+
+function Stat({ value, label }: { value: number; label: string }) {
+  return (
+    <div className="rounded-lg border bg-muted/20 p-4">
+      <div className="text-2xl font-bold">{value}</div>
+      <div className="mt-0.5 text-xs text-muted-foreground">{label}</div>
+    </div>
+  );
+}
+
+function ToggleSwitch({ on, onChange }: { on: boolean; onChange: (next: boolean) => void }) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={on}
+      onClick={() => onChange(!on)}
+      data-testid="row-access-toggle"
+      className={cn(
+        'relative h-6 w-11 shrink-0 cursor-pointer rounded-full transition-colors',
+        on ? 'bg-primary' : 'bg-muted-foreground/30',
+      )}
+    >
+      <span
+        className={cn(
+          'absolute left-0.5 top-0.5 size-5 rounded-full bg-background shadow transition-transform',
+          on && 'translate-x-5',
+        )}
+      />
+    </button>
+  );
+}
+
+function ConfirmDialog({
+  title,
+  body,
+  confirmLabel,
+  onCancel,
+  onConfirm,
+}: {
+  title: string;
+  body: string;
+  confirmLabel: string;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-6"
+      onClick={onCancel}
+      data-testid="row-access-confirm"
+    >
+      <div
+        className="w-full max-w-sm rounded-lg bg-background p-5 shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h3 className="text-base font-semibold">{title}</h3>
+        <p className="mt-1.5 text-sm text-muted-foreground">{body}</p>
+        <div className="mt-5 flex justify-end gap-2">
+          <Button variant="outline" onClick={onCancel}>
+            Cancel
+          </Button>
+          <Button variant="primary" onClick={onConfirm} data-testid="row-access-confirm-off">
+            {confirmLabel}
+          </Button>
         </div>
       </div>
     </div>

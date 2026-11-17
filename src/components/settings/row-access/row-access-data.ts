@@ -19,9 +19,13 @@ export interface PreviewPerson {
   status: PersonStatus;
   /** Shown in the expanded row — why they see what they see. */
   reason: string;
+  /** Whether this person has a row in the uploaded file (Meena doesn't — that's why she sees nothing). */
+  inFile: boolean;
+  /** The raw cell values exactly as typed in the file, before row access resolves them. */
+  file?: { district: string; taluka: string; dam_id: string };
 }
 
-export type Severity = 'critical' | 'minor';
+export type Severity = 'blocking' | 'warning' | 'info';
 
 /** One row revealed when a group issue's "see more" is expanded. */
 export interface AffectedItem {
@@ -63,18 +67,18 @@ export const DASHBOARDS: { name: string; filtered: boolean }[] = [
 ];
 
 export const PEOPLE: PreviewPerson[] = [
-  { id: 'priya', name: 'Priya Nair', role: 'member', email: 'priya@atecf.org', view: 'Ahilyanagar · Pune', rows: '2,410', state: 'ok', status: 'access', reason: 'Scoped to Ahilyanagar and Pune, all talukas and dams.' },
-  { id: 'rahul', name: 'Rahul Deshmukh', role: 'member', email: 'rahul@mh.gov.in', view: 'Solapur · Pandharpur', rows: '1,204', state: 'ok', status: 'access', reason: 'Scoped to Solapur district, Pandharpur taluka.' },
-  { id: 'anjali', name: 'Anjali K.', role: 'member', email: 'lead@atecf.org', view: 'all rows', rows: '8,330', state: 'all', status: 'everything', reason: '* on every column, so this member sees all rows.' },
-  { id: 'anita', name: 'Anita S.', role: 'member', email: 'anita@atecf.org', view: 'Parner · Ashti', rows: '862', state: 'ok', status: 'access', reason: 'Talukas Parner and Ashti, inside Ahilyanagar and Beed.' },
-  { id: 'sunil', name: 'Sunil K.', role: 'member', email: 'sunil@atecf.org', view: 'All Pune + Sinnar (Nashik)', rows: '3,145', state: 'ok', status: 'access', reason: 'Two rows add up: all of Pune, plus only Sinnar in Nashik.' },
-  { id: 'sunita', name: 'Sunita P.', role: 'member', email: 'sunita@partner.org', view: 'Dam D-104', rows: '120', state: 'ok', status: 'access', reason: 'One dam: Beed · Ashti · D-104.' },
-  { id: 'newuser', name: 'New user', role: 'member', email: 'new.user@atecf.org', view: 'Solapur · (taluka blank)', rows: '0', state: 'none', status: 'nothing', reason: 'Taluka is blank, and a blank cell means no access, so nothing from any table with a taluka column.' },
-  { id: 'deepak', name: 'Deepak V.', role: 'member', email: 'deepak@atecf.org', view: '“Ahmednagar” (not found)', rows: '0', state: 'none', status: 'nothing', reason: '“Ahmednagar” isn’t in your data. Did you mean “Ahilyanagar”? Fix the spelling.' },
-  { id: 'meena', name: 'Meena R.', role: 'member', email: 'meena@atecf.org', view: 'no row on the list', rows: '0', state: 'none', status: 'nothing', reason: 'Meena is a Dalgo member but has no row on the list, so she sees nothing. Add a row.' },
-  { id: 'farida', name: 'Farida K.', role: 'member', email: 'farida@atecf.org', view: 'Beed · Ashti', rows: '540', state: 'ok', status: 'access', reason: 'Scoped to Beed district, Ashti taluka.' },
-  { id: 'harish', name: 'Harish P.', role: 'member', email: 'harish@atecf.org', view: 'Nagpur', rows: '430', state: 'ok', status: 'access', reason: 'Scoped to Nagpur district.' },
-  { id: 'gita', name: 'Gita M.', role: 'member', email: 'gita@atecf.org', view: 'Nashik · Niphad', rows: '611', state: 'ok', status: 'access', reason: 'Scoped to Nashik district, Niphad taluka.' },
+  { id: 'priya', name: 'Priya Nair', role: 'member', email: 'priya@atecf.org', view: 'Ahilyanagar · Pune', rows: '2,410', state: 'ok', status: 'access', reason: 'Scoped to Ahilyanagar and Pune, all talukas and dams.', inFile: true, file: { district: 'Ahilyanagar; Pune', taluka: '*', dam_id: '*' } },
+  { id: 'rahul', name: 'Rahul Deshmukh', role: 'member', email: 'rahul@mh.gov.in', view: 'Solapur · Pandharpur', rows: '1,204', state: 'ok', status: 'access', reason: 'Scoped to Solapur district, Pandharpur taluka.', inFile: true, file: { district: 'Solapur', taluka: 'Pandharpur', dam_id: '*' } },
+  { id: 'anjali', name: 'Anjali K.', role: 'member', email: 'lead@atecf.org', view: 'all rows', rows: '8,330', state: 'all', status: 'everything', reason: '* on every column, so this member sees all rows.', inFile: true, file: { district: '*', taluka: '*', dam_id: '*' } },
+  { id: 'anita', name: 'Anita S.', role: 'member', email: 'anita@atecf.org', view: 'Parner · Ashti', rows: '862', state: 'ok', status: 'access', reason: 'Talukas Parner and Ashti, inside Ahilyanagar and Beed.', inFile: true, file: { district: 'Ahilyanagar; Beed', taluka: 'Parner; Ashti', dam_id: '*' } },
+  { id: 'sunil', name: 'Sunil K.', role: 'member', email: 'sunil@atecf.org', view: 'All Pune + Sinnar (Nashik)', rows: '3,145', state: 'ok', status: 'access', reason: 'Two rows add up: all of Pune, plus only Sinnar in Nashik.', inFile: true, file: { district: 'Pune; Nashik', taluka: '*; Sinnar', dam_id: '*' } },
+  { id: 'sunita', name: 'Sunita P.', role: 'member', email: 'sunita@partner.org', view: 'Dam D-104', rows: '120', state: 'ok', status: 'access', reason: 'One dam: Beed · Ashti · D-104.', inFile: true, file: { district: 'Beed', taluka: 'Ashti', dam_id: 'D-104' } },
+  { id: 'newuser', name: 'New user', role: 'member', email: 'new.user@atecf.org', view: 'Solapur · (taluka blank)', rows: '0', state: 'none', status: 'nothing', reason: 'Taluka is blank, and a blank cell means no access, so nothing from any table with a taluka column.', inFile: true, file: { district: 'Solapur', taluka: '', dam_id: '*' } },
+  { id: 'deepak', name: 'Deepak V.', role: 'member', email: 'deepak@atecf.org', view: '“Ahmednagar” (not found)', rows: '0', state: 'none', status: 'nothing', reason: '“Ahmednagar” isn’t in your data. Did you mean “Ahilyanagar”? Fix the spelling.', inFile: true, file: { district: 'Ahmednagar', taluka: '*', dam_id: '*' } },
+  { id: 'meena', name: 'Meena R.', role: 'member', email: 'meena@atecf.org', view: 'no row on the list', rows: '0', state: 'none', status: 'nothing', reason: 'Meena is a Dalgo member but has no row on the list, so she sees nothing. Add a row.', inFile: false },
+  { id: 'farida', name: 'Farida K.', role: 'member', email: 'farida@atecf.org', view: 'Beed · Ashti', rows: '540', state: 'ok', status: 'access', reason: 'Scoped to Beed district, Ashti taluka.', inFile: true, file: { district: 'Beed', taluka: 'Ashti', dam_id: '*' } },
+  { id: 'harish', name: 'Harish P.', role: 'member', email: 'harish@atecf.org', view: 'Nagpur', rows: '430', state: 'ok', status: 'access', reason: 'Scoped to Nagpur district.', inFile: true, file: { district: 'Nagpur', taluka: '*', dam_id: '*' } },
+  { id: 'gita', name: 'Gita M.', role: 'member', email: 'gita@atecf.org', view: 'Nashik · Niphad', rows: '611', state: 'ok', status: 'access', reason: 'Scoped to Nashik district, Niphad taluka.', inFile: true, file: { district: 'Nashik', taluka: 'Niphad', dam_id: '*' } },
 ];
 
 /**
@@ -82,10 +86,10 @@ export const PEOPLE: PreviewPerson[] = [
  * Critical = someone is locked out or the rule is broken. Minor = worth a look, no one blocked.
  */
 export const ISSUES: FixIssue[] = [
-  // ----- Critical -----
+  // ----- Blocking (halts setup until fixed) -----
   {
     id: 'noemail',
-    severity: 'critical',
+    severity: 'blocking',
     title: '3 rows have no email',
     desc: 'Those rows can’t be matched to anyone, so they’re ignored. Add an email to each, or remove them.',
     fix: true,
@@ -100,7 +104,7 @@ export const ISSUES: FixIssue[] = [
   },
   {
     id: 'newuser',
-    severity: 'critical',
+    severity: 'warning',
     title: 'New user has no taluka',
     desc: 'A blank cell means no access, so they’ll see nothing. Add their taluka, or * for all.',
     fix: true,
@@ -108,7 +112,7 @@ export const ISSUES: FixIssue[] = [
   },
   {
     id: 'deepak',
-    severity: 'critical',
+    severity: 'warning',
     title: '“Ahmednagar” matches no data',
     desc: 'Your data has “Ahilyanagar”, likely the same place. Fix the spelling so Deepak sees his rows.',
     fix: true,
@@ -116,16 +120,16 @@ export const ISSUES: FixIssue[] = [
   },
   {
     id: 'meena',
-    severity: 'critical',
+    severity: 'warning',
     title: 'Meena R. has no row on the list',
     desc: 'She’s a Dalgo member with no row, so she sees nothing. Add a row for her.',
     fix: true,
     personId: 'meena',
   },
-  // ----- Minor -----
+  // ----- Warning / Info (non-blocking; accept or fix) -----
   {
     id: 'partial',
-    severity: 'minor',
+    severity: 'warning',
     title: 'Partial scope on farmer_list',
     desc: 'Some people are scoped to taluka, but farmer_list has only district, so they’ll see the whole district there.',
     affected: {
@@ -141,7 +145,7 @@ export const ISSUES: FixIssue[] = [
   },
   {
     id: 'samecol',
-    severity: 'minor',
+    severity: 'info',
     title: '“state” column looks unrelated',
     desc: 'A column named state holds application status, not a place, so its values never match the list. Consider excluding that table.',
     affected: {
@@ -156,7 +160,7 @@ export const ISSUES: FixIssue[] = [
   },
   {
     id: 'trim',
-    severity: 'minor',
+    severity: 'info',
     title: 'Trimmed extra spaces on 2 emails',
     desc: 'We cleaned these automatically, no action needed.',
     affected: {
@@ -165,6 +169,16 @@ export const ISSUES: FixIssue[] = [
         { primary: 'anita@atecf.org', secondary: 'had a trailing space' },
         { primary: 'gita@atecf.org', secondary: 'had a leading space' },
       ],
+    },
+  },
+  {
+    id: 'admininfile',
+    severity: 'warning',
+    title: '1 analyst is in the file',
+    desc: 'Row level security only applies to members, so this row is ignored. Remove it, or leave it; it has no effect.',
+    affected: {
+      cta: 'See who',
+      items: [{ primary: 'analyst@atecf.org', secondary: 'Analyst, always sees every row' }],
     },
   },
 ];
