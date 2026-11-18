@@ -1068,7 +1068,7 @@ function SearchBox({ value, onChange }: { value: string; onChange: (v: string) =
 
 function StatusBadge({ status }: { status: PersonStatus }) {
   const map: Record<PersonStatus, { label: string; cls: string }> = {
-    access: { label: 'Has access', cls: 'bg-primary/10 text-primary' },
+    access: { label: 'Sees their rows', cls: 'bg-primary/10 text-primary' },
     everything: { label: 'Sees everything', cls: 'bg-primary/10 text-primary' },
     nothing: { label: 'Sees nothing', cls: 'bg-muted text-muted-foreground' },
   };
