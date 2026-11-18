@@ -2,7 +2,6 @@
 
 import { Fragment, useRef, useState } from 'react';
 import {
-  AlertTriangle,
   ArrowUpRight,
   ChevronRight,
   Download,
@@ -26,7 +25,6 @@ import {
   type PreviewPerson,
   type PersonStatus,
   type FixIssue,
-  type Severity,
 } from './row-access-data';
 
 /**
@@ -41,7 +39,7 @@ type Stage = 'setup' | 'review' | 'saved';
 /** Prototype-only demo flows — each pill jumps to a scenario's starting point. */
 type FlowId = 'start' | 'blocked' | 'review' | 'live';
 const FLOWS: { id: FlowId; label: string }[] = [
-  { id: 'start', label: 'Start' },
+  { id: 'start', label: 'Full' },
   { id: 'blocked', label: 'File has errors' },
   { id: 'review', label: 'Ideal' },
   { id: 'live', label: 'Live' },
@@ -51,16 +49,34 @@ const FLOWS: { id: FlowId; label: string }[] = [
 type DraftView = 'file' | 'preview';
 
 const RLS_DESCRIPTION =
-  'Members see only the rows you assign them on shared dashboards, so a district officer opens the org dashboard and sees only their own district.';
+  'Restrict the data members can see on shared dashboards based on their assigned access rules. Members will have view-only access.';
 
 const DEFAULT_FILE = 'district-officers-row-access.csv';
 const BLOCKING_COUNT = ISSUES.filter((i) => i.severity === 'blocking').length;
 
-const SEVERITY_META: Record<Severity, { label: string; dot: string }> = {
-  blocking: { label: 'Blocking', dot: 'bg-red-500' },
-  warning: { label: 'Warning', dot: 'bg-amber-500' },
-  info: { label: 'Info', dot: 'bg-sky-500' },
+/**
+ * User-facing consequence of each check — what it means for a member's access.
+ * Replaces the system "Warning / Info" labels: the severity rides on the row (a dot),
+ * and the list is ordered locked-out → sees-more → good-to-know.
+ */
+type AlertCategory = 'nothing' | 'more' | 'fyi';
+const ALERT_CATEGORY: Record<string, AlertCategory> = {
+  noemail: 'nothing',
+  newuser: 'nothing',
+  deepak: 'nothing',
+  meena: 'nothing',
+  partial: 'more',
+  samecol: 'fyi',
+  trim: 'fyi',
+  admininfile: 'fyi',
 };
+const CATEGORY_ORDER: Record<AlertCategory, number> = { nothing: 0, more: 1, fyi: 2 };
+const CATEGORY_DOT: Record<AlertCategory, string> = {
+  nothing: 'bg-red-500', // a member will see nothing (locked out)
+  more: 'bg-amber-500', // sees more than you set
+  fyi: 'bg-muted-foreground/40', // good to know
+};
+const categoryOf = (id: string): AlertCategory => ALERT_CATEGORY[id] ?? 'fyi';
 
 export function RowAccessTab() {
   const [stage, setStage] = useState<Stage>('setup');
@@ -79,7 +95,7 @@ export function RowAccessTab() {
       setBlocked(false); // clean upload in the prototype — straight to the draft
       setDraftView('file'); // show the file's contents first (the "before")
       setStage('review');
-      setFlow('review');
+      // Keep the active flow: Full shows alerts, Ideal stays the clean happy path.
     }
     e.target.value = '';
   };
@@ -90,12 +106,12 @@ export function RowAccessTab() {
     setFileName(DEFAULT_FILE);
     setDraftView('file');
     switch (id) {
-      case 'start':
+      case 'start': // Full — begin at setup, toggle off; upload shows the review with alerts
         setEnabled(false);
         setStage('setup');
         setBlocked(false);
         break;
-      case 'review': // Ideal — begin at the upload step, toggle on, ready to choose a file
+      case 'review': // Ideal — happy path: toggle on, upload a clean file, review with no alerts
         setEnabled(true);
         setStage('setup');
         setBlocked(false);
@@ -151,6 +167,7 @@ export function RowAccessTab() {
             fileName={fileName}
             draftView={draftView}
             enabled={enabled}
+            ideal={flow === 'review'}
             onToggle={disableFromDraft}
             onShowFile={() => setDraftView('file')}
             onShowPreview={() => setDraftView('preview')}
@@ -163,15 +180,28 @@ export function RowAccessTab() {
         ))}
       {stage === 'saved' && <SavedState fileName={fileName} onReplace={openFilePicker} />}
 
-      <FlowSwitcher active={flow} onSelect={applyFlow} />
+      <FlowSwitcher active={flow} onSelect={applyFlow} raised={stage === 'review' && !blocked} />
     </div>
   );
 }
 
 /** Prototype-only flow switcher — floats at bottom-centre, jumps between demo scenarios. */
-function FlowSwitcher({ active, onSelect }: { active: FlowId; onSelect: (id: FlowId) => void }) {
+function FlowSwitcher({
+  active,
+  onSelect,
+  raised = false,
+}: {
+  active: FlowId;
+  onSelect: (id: FlowId) => void;
+  raised?: boolean;
+}) {
   return (
-    <div className="pointer-events-none fixed inset-x-0 bottom-5 z-40 flex justify-center px-4">
+    <div
+      className={cn(
+        'pointer-events-none fixed inset-x-0 z-40 flex justify-center px-4',
+        raised ? 'bottom-24' : 'bottom-5',
+      )}
+    >
       <div className="pointer-events-auto flex items-center gap-1 rounded-full border bg-background/95 p-1 shadow-lg backdrop-blur">
         <span className="px-2 text-xs font-medium text-muted-foreground">Flow</span>
         {FLOWS.map((f) => (
@@ -245,26 +275,42 @@ function EnableCard({
   fileName,
   onReplace,
   showDownload = false,
+  children,
 }: {
   enabled: boolean;
   onToggle: (next: boolean) => void;
   fileName: string;
   onReplace: () => void;
   showDownload?: boolean;
+  children?: React.ReactNode;
 }) {
   return (
     <div className="rounded-lg border bg-background p-6">
       <div className="flex items-start justify-between gap-6">
         <div>
           <h2 className="text-base font-semibold">Enable Row Level Security</h2>
-          <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-            {RLS_DESCRIPTION} Turning it on makes members view-only.
-          </p>
+          <p className="mt-1 max-w-2xl text-sm text-muted-foreground">{RLS_DESCRIPTION}</p>
         </div>
         <ToggleSwitch on={enabled} onChange={onToggle} />
       </div>
       <div className="mt-6 border-t pt-6">
         <FileRow fileName={fileName} onReplace={onReplace} showDownload={showDownload} />
+        {children}
+      </div>
+    </div>
+  );
+}
+
+/** Impact summary — the scope of the rule (members / datasets / dashboards). Shown in review + saved. */
+function ImpactSummary({ memberCount }: { memberCount: number }) {
+  const datasets = TABLES.filter((t) => t.cols.length).length;
+  return (
+    <div className="rounded-lg border bg-background p-6" data-testid="row-access-summary">
+      <h3 className="text-base font-semibold">Impact summary</h3>
+      <div className="mt-4 grid grid-cols-3 gap-4">
+        <Stat value={memberCount} label="Members scoped" />
+        <Stat value={datasets} label="Datasets filtered" />
+        <Stat value={DASHBOARDS.length} label="Dashboards affected" />
       </div>
     </div>
   );
@@ -285,9 +331,7 @@ function UploadStage({
       <div className="flex items-start justify-between gap-6">
         <div>
           <h2 className="text-base font-semibold">Enable Row Level Security</h2>
-          <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-            {RLS_DESCRIPTION} Turning it on makes members view-only.
-          </p>
+          <p className="mt-1 max-w-2xl text-sm text-muted-foreground">{RLS_DESCRIPTION}</p>
         </div>
         <ToggleSwitch on={enabled} onChange={onToggle} />
       </div>
@@ -331,45 +375,36 @@ function BlockedGate({
   onReupload: () => void;
 }) {
   const blocking = ISSUES.filter((i) => i.severity === 'blocking');
-  const [openId, setOpenId] = useState<string | null>(null);
+  const [openId, setOpenId] = useState<string | null>(blocking[0]?.id ?? null);
   const one = blocking.length === 1;
 
   return (
     <div data-testid="row-access-blocked">
-      <EnableCard enabled={enabled} onToggle={onToggle} fileName={fileName} onReplace={onReplace} />
-
-      <div className="mt-6 rounded-lg border border-red-200 bg-red-50/60 p-6">
-        <div className="flex items-center gap-2">
-          <AlertTriangle className="size-5 shrink-0 text-red-600" />
-          <h3 className="text-base font-semibold">
+      <EnableCard enabled={enabled} onToggle={onToggle} fileName={fileName} onReplace={onReplace}>
+        <div className="mt-4">
+          <p className="mb-2 text-sm font-semibold">
             Fix {one ? 'this' : `these ${blocking.length}`} before you can continue
-          </h3>
-        </div>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Row level security can’t be set up until {one ? 'it’s' : 'they’re'} fixed. Fix{' '}
-          {one ? 'it' : 'them'} in your sheet and re-upload.
-        </p>
-        <div className="mt-4 divide-y rounded-lg border bg-background">
-          {blocking.map((issue) => (
-            <div key={issue.id} className="p-4">
+          </p>
+          <div className="divide-y rounded-lg border border-red-200 bg-red-50/50 px-4">
+            {blocking.map((issue) => (
               <AlertItem
+                key={issue.id}
                 issue={issue}
                 open={openId === issue.id}
                 onToggle={() => setOpenId(openId === issue.id ? null : issue.id)}
               />
-            </div>
-          ))}
+            ))}
+          </div>
         </div>
-      </div>
+      </EnableCard>
 
-      <div className="mt-6 flex flex-wrap items-center gap-3">
-        <Button variant="primary" onClick={onReupload} data-testid="row-access-blocked-reupload">
-          <Upload className="mr-2 size-4" />
-          Re-upload fixed file
-        </Button>
-        <p className="text-sm text-muted-foreground">
+      <div className="mt-6">
+        <p className="mb-3 text-sm text-muted-foreground">
           You can’t preview access until {one ? 'it’s' : 'these are'} fixed.
         </p>
+        <Button variant="primary" onClick={onReupload} data-testid="row-access-blocked-reupload">
+          Re-upload fixed file
+        </Button>
       </div>
     </div>
   );
@@ -384,6 +419,7 @@ function FunnelReview({
   fileName,
   draftView,
   enabled,
+  ideal,
   onToggle,
   onShowFile,
   onShowPreview,
@@ -393,12 +429,16 @@ function FunnelReview({
   fileName: string;
   draftView: DraftView;
   enabled: boolean;
+  ideal: boolean;
   onToggle: (next: boolean) => void;
   onShowFile: () => void;
   onShowPreview: () => void;
   onReplace: () => void;
   onSaveProceed: () => void;
 }) {
+  // Ideal (happy path) resolves to a tidy file where everyone is properly scoped.
+  const people = ideal ? PEOPLE.map((p) => (p.clean ? { ...p, ...p.clean } : p)) : PEOPLE;
+
   const header = (
     <EnableCard enabled={enabled} onToggle={onToggle} fileName={fileName} onReplace={onReplace} />
   );
@@ -406,7 +446,7 @@ function FunnelReview({
   // Step 1 — the uploaded file (before). One CTA: Preview.
   if (draftView === 'file') {
     return (
-      <div data-testid="row-access-review">
+      <div className="pb-24" data-testid="row-access-review">
         {header}
         <div className="mt-6 rounded-lg border bg-background p-6">
           <h3 className="text-base font-semibold">The list you uploaded</h3>
@@ -414,10 +454,10 @@ function FunnelReview({
             What’s in the file, before row access is applied.
           </p>
           <div className="mt-4">
-            <FileContentTable />
+            <FileContentTable people={people} />
           </div>
         </div>
-        <div className="mt-6">
+        <div className="fixed inset-x-0 bottom-0 z-30 flex justify-start border-t bg-background/95 px-6 py-4 backdrop-blur md:left-56">
           <Button variant="primary" onClick={onShowPreview} data-testid="row-access-preview-cta">
             <Eye className="mr-2 size-4" />
             Preview access
@@ -427,52 +467,29 @@ function FunnelReview({
     );
   }
 
-  // Step 2 — summary + alerts, then the applied preview list.
-  const warnings = ISSUES.filter((i) => i.severity === 'warning');
-  const infos = ISSUES.filter((i) => i.severity === 'info');
-  const seeTheirRows = PEOPLE.filter((p) => p.status === 'access').length;
-  const seeEverything = PEOPLE.filter((p) => p.status === 'everything').length;
-  const seeNothing = PEOPLE.filter((p) => p.status === 'nothing').length;
-  const datasets = TABLES.filter((t) => t.cols.length).length;
+  // Step 2 — impact summary + alerts, then the applied preview list.
+  // Demo set: one locked-out, one sees-more, two good-to-know; full taxonomy lives in dalgo-rls-errors-map.md.
+  const DEMO_ALERT_IDS = ['newuser', 'partial', 'samecol', 'trim'];
+  const shownAlerts = ISSUES.filter((i) => i.severity !== 'blocking' && DEMO_ALERT_IDS.includes(i.id));
 
   return (
-    <div data-testid="row-access-review">
+    <div className="pb-24" data-testid="row-access-review">
       {header}
 
-      {/* Summary — what the rule will do */}
-      <div className="mt-6 rounded-lg border bg-background p-6" data-testid="row-access-summary">
-        <h3 className="text-base font-semibold">What this will do</h3>
-        <div className="mt-4 grid grid-cols-3 gap-4">
-          <Stat value={PEOPLE.length} label="Members scoped" />
-          <Stat value={datasets} label="Datasets filtered" />
-          <Stat value={DASHBOARDS.length} label="Dashboards affected" />
-        </div>
-        <div className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-1 text-sm">
-          <span>
-            <span className="font-semibold text-foreground">{seeTheirRows}</span> see their rows
-          </span>
-          <span>
-            <span className="font-semibold text-foreground">{seeEverything}</span> sees everything
-          </span>
-          {seeNothing > 0 && (
-            <span className="text-amber-700">
-              <span className="font-semibold">{seeNothing}</span> see nothing
-            </span>
-          )}
-        </div>
+      <div className="mt-6">
+        <ImpactSummary memberCount={people.length} />
       </div>
 
-      {/* Alert summary — refined into the consequence hierarchy next */}
-      <div className="mt-6 rounded-lg border bg-background p-6" data-testid="row-access-alerts">
-        <h3 className="text-base font-semibold">Alerts</h3>
-        <p className="mt-0.5 text-sm text-muted-foreground">
-          Nothing here blocks you. Fix in your sheet and re-upload, or accept and continue.
-        </p>
-        <div className="mt-4 space-y-5">
-          <AlertSection severity="warning" issues={warnings} />
-          <AlertSection severity="info" issues={infos} />
+      {/* Alert summary — shown in Full; hidden on the Ideal happy path */}
+      {!ideal && (
+        <div className="mt-6 rounded-lg border bg-background p-6" data-testid="row-access-alerts">
+          <h3 className="text-base font-semibold">Needs attention</h3>
+          <p className="mt-0.5 text-sm text-muted-foreground">
+            Review how these rules affect member access before applying the configuration.
+          </p>
+          <AlertsPanel issues={shownAlerts} />
         </div>
-      </div>
+      )}
 
       {/* The applied preview list */}
       <div className="mt-6 rounded-lg border bg-background p-6">
@@ -481,11 +498,11 @@ function FunnelReview({
           What each member sees once row access is on.
         </p>
         <div className="mt-4">
-          <PreviewList />
+          <PreviewList people={people} />
         </div>
       </div>
 
-      <div className="mt-6 flex flex-wrap items-center gap-3">
+      <div className="fixed inset-x-0 bottom-0 z-30 flex items-center justify-start gap-3 border-t bg-background/95 px-6 py-4 backdrop-blur md:left-56">
         <Button variant="outline" onClick={onShowFile} data-testid="row-access-back">
           Back
         </Button>
@@ -498,47 +515,49 @@ function FunnelReview({
 }
 
 /** The raw uploaded list — one row per member, the scope columns exactly as typed (the "before"). */
-function FileContentTable() {
+function FileContentTable({ people = PEOPLE }: { people?: PreviewPerson[] }) {
   const cols = DETECTED_COLUMNS.filter((c) => c.role === 'filter');
-  const rows = PEOPLE.filter((p) => p.inFile);
+  const rows = people.filter((p) => p.inFile);
   return (
-    <div className="overflow-x-auto rounded-lg border" data-testid="row-access-file-table">
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="border-b bg-muted/40 text-left text-xs uppercase tracking-wide text-muted-foreground">
-            <th className="px-4 py-2.5 font-medium">Member</th>
-            {cols.map((c) => (
-              <th key={c.name} className="px-4 py-2.5 font-mono text-xs font-medium normal-case">
-                {c.name}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((p) => (
-            <tr key={p.id} className="border-b last:border-0" data-testid={`row-access-file-row-${p.id}`}>
-              <td className="px-4 py-3 align-top">
-                <div className="font-medium">{p.name}</div>
-                <div className="text-xs text-muted-foreground">{p.email}</div>
-              </td>
-              {cols.map((c) => {
-                const v = p.file?.[c.name as 'district' | 'taluka' | 'dam_id'] ?? '';
-                return (
-                  <td key={c.name} className="px-4 py-3 align-top font-mono text-xs">
-                    {v === '' ? (
-                      <span className="italic text-muted-foreground/60">blank</span>
-                    ) : v === '*' ? (
-                      <span className="text-muted-foreground">* (all)</span>
-                    ) : (
-                      v
-                    )}
-                  </td>
-                );
-              })}
+    <div className="rounded-lg border" data-testid="row-access-file-table">
+      <div className="max-h-[600px] overflow-auto">
+        <table className="w-full text-sm">
+          <thead className="sticky top-0 z-10 bg-background">
+            <tr className="border-b bg-muted/40 text-left text-xs uppercase tracking-wide text-muted-foreground">
+              <th className="px-4 py-2.5 font-medium">Member</th>
+              {cols.map((c) => (
+                <th key={c.name} className="px-4 py-2.5 font-mono text-xs font-medium normal-case">
+                  {c.name}
+                </th>
+              ))}
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {rows.map((p) => (
+              <tr key={p.id} className="border-b last:border-0" data-testid={`row-access-file-row-${p.id}`}>
+                <td className="px-4 py-3 align-top">
+                  <div className="font-medium">{p.name}</div>
+                  <div className="text-xs text-muted-foreground">{p.email}</div>
+                </td>
+                {cols.map((c) => {
+                  const v = p.file?.[c.name as 'district' | 'taluka' | 'dam_id'] ?? '';
+                  return (
+                    <td key={c.name} className="px-4 py-3 align-top font-mono text-xs">
+                      {v === '' ? (
+                        <span className="italic text-muted-foreground/60">blank</span>
+                      ) : v === '*' ? (
+                        <span className="text-muted-foreground">* (all)</span>
+                      ) : (
+                        v
+                      )}
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
       <p className="border-t bg-muted/20 px-4 py-2 text-xs text-muted-foreground">
         Shown as uploaded. <span className="font-mono">*</span> means all, a blank cell means none.
       </p>
@@ -550,7 +569,6 @@ function FileContentTable() {
 function SavedState({ fileName, onReplace }: { fileName: string; onReplace: () => void }) {
   const [enabled, setEnabled] = useState(true);
   const [confirmOff, setConfirmOff] = useState(false);
-  const seeNothing = PEOPLE.filter((p) => p.status === 'nothing').length;
 
   const handleToggle = (next: boolean) => {
     if (next) {
@@ -573,25 +591,10 @@ function SavedState({ fileName, onReplace }: { fileName: string; onReplace: () =
 
       {enabled && (
         <>
-          <div
-            className="mt-6 flex flex-wrap items-center gap-2 text-sm text-muted-foreground"
-            data-testid="row-access-saved-summary"
-          >
-            <span className="rounded-full bg-primary/10 px-2.5 py-0.5 text-xs font-semibold text-primary">
-              Live
-            </span>
-            <span>·</span>
-            <span className="font-medium text-foreground">{PEOPLE.length} members</span>
-            <span>·</span>
-            <span>scoped to district · taluka · dam_id</span>
-            {seeNothing > 0 && (
-              <>
-                <span>·</span>
-                <span className="text-amber-700">{seeNothing} see nothing</span>
-              </>
-            )}
+          <div className="mt-6">
+            <ImpactSummary memberCount={PEOPLE.length} />
           </div>
-          <div className="mt-3 rounded-lg border bg-background p-6">
+          <div className="mt-6 rounded-lg border bg-background p-6">
             <h3 className="mb-3 text-base font-semibold">Preview</h3>
             <PreviewList />
           </div>
@@ -616,7 +619,7 @@ function SavedState({ fileName, onReplace }: { fileName: string; onReplace: () =
 }
 
 /** The applied preview — a table of each member, what they see, and a Preview-as-user action. */
-function PreviewList() {
+function PreviewList({ people = PEOPLE }: { people?: PreviewPerson[] }) {
   const [q, setQ] = useState('');
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [picker, setPicker] = useState<PreviewPerson | null>(null);
@@ -628,24 +631,42 @@ function PreviewList() {
 
   const needle = q.trim().toLowerCase();
   const matches = needle
-    ? PEOPLE.filter(
+    ? people.filter(
         (p) => p.name.toLowerCase().includes(needle) || p.email.toLowerCase().includes(needle),
       )
-    : PEOPLE;
+    : people;
+
+  const seeTheirRows = people.filter((p) => p.status === 'access').length;
+  const seeEverything = people.filter((p) => p.status === 'everything').length;
+  const seeNothing = people.filter((p) => p.status === 'nothing').length;
 
   return (
     <div>
       <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-        <span className="text-sm text-muted-foreground">{PEOPLE.length} members</span>
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted-foreground">
+          <span className="font-semibold text-foreground">{people.length} members</span>
+          <span aria-hidden>·</span>
+          <span>
+            <span className="font-semibold text-foreground">{seeTheirRows}</span> see their rows
+          </span>
+          <span aria-hidden>·</span>
+          <span>
+            <span className="font-semibold text-foreground">{seeEverything}</span> sees everything
+          </span>
+          <span aria-hidden>·</span>
+          <span className={cn(seeNothing > 0 && 'text-amber-700')}>
+            <span className="font-semibold">{seeNothing}</span> see nothing
+          </span>
+        </div>
         <SearchBox value={q} onChange={setQ} />
       </div>
 
       <div
-        className="overflow-x-auto rounded-lg border bg-background"
+        className="max-h-[600px] overflow-auto rounded-lg border bg-background"
         data-testid="row-access-member-list"
       >
         <table className="w-full text-sm">
-          <thead>
+          <thead className="sticky top-0 z-10 bg-background">
             <tr className="border-b bg-muted/40 text-left text-xs uppercase tracking-wide text-muted-foreground">
               <th className="px-4 py-2.5 font-medium">Member</th>
               <th className="px-4 py-2.5 font-medium">Sees</th>
@@ -840,33 +861,35 @@ function RowDetail({ person }: { person: PreviewPerson }) {
   );
 }
 
-/** A tiered alert group (Warning / Info / Blocking) with per-issue "see more". */
-function AlertSection({ severity, issues }: { severity: Severity; issues: FixIssue[] }) {
-  const [openId, setOpenId] = useState<string | null>(null);
-  if (!issues.length) return null;
-  const meta = SEVERITY_META[severity];
+/**
+ * The draft alerts — one flat, collapsible list, no Warning/Info buckets.
+ * Each row carries its own severity (a coloured dot); the list is ordered
+ * locked-out → sees-more → good-to-know, with the top item open by default.
+ */
+function AlertsPanel({ issues }: { issues: FixIssue[] }) {
+  const sorted = [...issues].sort(
+    (a, b) => CATEGORY_ORDER[categoryOf(a.id)] - CATEGORY_ORDER[categoryOf(b.id)],
+  );
+  const [openId, setOpenId] = useState<string | null>(sorted[0]?.id ?? null);
+  const toggle = (id: string) => setOpenId((cur) => (cur === id ? null : id));
   return (
-    <div>
-      <div className="mb-1.5 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-        <span className={cn('size-2 rounded-full', meta.dot)} />
-        {meta.label}
-        <span className="text-muted-foreground/70">({issues.length})</span>
-      </div>
-      <div className="divide-y">
-        {issues.map((issue) => (
-          <AlertItem
-            key={issue.id}
-            issue={issue}
-            open={openId === issue.id}
-            onToggle={() => setOpenId(openId === issue.id ? null : issue.id)}
-          />
-        ))}
-      </div>
+    <div
+      className="mt-4 divide-y rounded-lg border bg-background px-4"
+      data-testid="row-access-alert-groups"
+    >
+      {sorted.map((issue) => (
+        <AlertItem
+          key={issue.id}
+          issue={issue}
+          open={openId === issue.id}
+          onToggle={() => toggle(issue.id)}
+        />
+      ))}
     </div>
   );
 }
 
-/** One alert row: title + desc, an optional "see more" list, and a Fix-in-sheet hint. */
+/** One alert: a severity dot + title; open reveals the consequence and any affected rows. */
 function AlertItem({
   issue,
   open,
@@ -877,30 +900,36 @@ function AlertItem({
   onToggle: () => void;
 }) {
   return (
-    <div className="py-3 first:pt-0">
-      <p className="text-sm font-medium">{issue.title}</p>
-      <p className="mt-0.5 text-sm text-muted-foreground">{issue.desc}</p>
+    <div data-testid={`row-access-alert-${issue.id}`}>
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={open}
+        className="flex w-full cursor-pointer items-center gap-2.5 py-3 text-left"
+        data-testid={`row-access-alert-head-${issue.id}`}
+      >
+        <span className={cn('size-2 shrink-0 rounded-full', CATEGORY_DOT[categoryOf(issue.id)])} />
+        <span className="flex-1 text-sm font-medium">{issue.title}</span>
+        <ChevronRight
+          className={cn(
+            'size-4 shrink-0 text-muted-foreground transition-transform',
+            open && 'rotate-90',
+          )}
+        />
+      </button>
 
-      {issue.affected && (
-        <>
-          <button
-            type="button"
-            onClick={onToggle}
-            aria-expanded={open}
-            className="mt-2 flex cursor-pointer items-center gap-1 text-xs font-medium text-foreground/80 hover:text-foreground"
-            data-testid={`row-access-seemore-${issue.id}`}
-          >
-            {open ? 'Hide' : issue.affected.cta}
-            <ChevronRight className={cn('size-3 transition-transform', open && 'rotate-90')} />
-          </button>
-          {open && (
+      {open && (
+        <div className="pb-3 pl-[18px]">
+          <p className="text-sm text-muted-foreground">{issue.desc}</p>
+
+          {issue.affected && (
             <ul
-              className="mt-2 space-y-2 rounded-md border bg-muted/30 p-2.5"
+              className="mt-2 space-y-1.5 text-xs text-muted-foreground"
               data-testid={`row-access-affected-${issue.id}`}
             >
               {issue.affected.items.map((it) => (
-                <li key={it.primary} className="text-xs leading-snug">
-                  <span className="font-medium">{it.primary}</span>
+                <li key={it.primary} className="leading-snug">
+                  <span className="font-medium text-foreground">{it.primary}</span>
                   {it.secondary && (
                     <span className="mt-0.5 block text-muted-foreground">{it.secondary}</span>
                   )}
@@ -908,17 +937,7 @@ function AlertItem({
               ))}
             </ul>
           )}
-        </>
-      )}
-
-      {issue.fix && (
-        <button
-          type="button"
-          className="mt-2 cursor-pointer rounded-md border px-2 py-1 text-xs text-muted-foreground hover:bg-muted"
-          data-testid={`row-access-fix-${issue.id}`}
-        >
-          Fix in sheet
-        </button>
+        </div>
       )}
     </div>
   );
