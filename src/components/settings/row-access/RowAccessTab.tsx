@@ -30,9 +30,9 @@ import {
 /**
  * Row Level Security — v3 (per the 18 Nov product sync).
  * No uploaded-file step: upload → loader → review (impact summary + Needs
- * attention + Member access list in one scroll). Preview-as-member is a required
- * step — Save & apply stays disabled until the admin previews a member and clicks
- * Done. Blocking checks still gate the flow. v2 kept as RowAccessTab.v2.bak.
+ * attention + Member access list in one scroll). Preview-as-member is an optional
+ * aid; Save & apply is always available. Blocking checks still gate the flow.
+ * v2 kept as RowAccessTab.v2.bak.
  */
 
 type Stage = 'setup' | 'review' | 'saved';
@@ -611,9 +611,7 @@ function FunnelReview({
   // Ideal (happy path) resolves to a tidy file where everyone is properly scoped.
   const people = ideal ? PEOPLE.map((p) => (p.clean ? { ...p, ...p.clean } : p)) : PEOPLE;
 
-  // Preview-as-member is a required step: Save & apply stays disabled until the admin
-  // opens the preview and closes it with Done (18 Nov sync: forced preview).
-  const [previewed, setPreviewed] = useState(false);
+  // Preview as member is an optional aid — Save & apply is always available.
   const [showPreview, setShowPreview] = useState(false);
 
   const header = (
@@ -671,7 +669,7 @@ function FunnelReview({
           What each member sees once row access is on.
         </p>
         <div className="mt-4">
-          <PreviewList people={people} onPreviewed={() => setPreviewed(true)} />
+          <PreviewList people={people} />
         </div>
       </div>
 
@@ -688,27 +686,18 @@ function FunnelReview({
           <Button
             variant="primary"
             onClick={onSaveProceed}
-            disabled={!previewed}
             data-testid="row-access-save-apply"
           >
             Save and apply
           </Button>
         </div>
-        {!previewed && (
-          <span className="text-xs text-muted-foreground" data-testid="row-access-save-hint">
-            Preview as a member first to apply.
-          </span>
-        )}
       </div>
 
       {showPreview && (
         <PreviewAsMemberModal
           people={people}
           onClose={() => setShowPreview(false)}
-          onDone={() => {
-            setPreviewed(true);
-            setShowPreview(false);
-          }}
+          onDone={() => setShowPreview(false)}
         />
       )}
     </div>
