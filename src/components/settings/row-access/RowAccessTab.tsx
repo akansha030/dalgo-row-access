@@ -526,8 +526,8 @@ function UploadStage({
           </div>
 
           <p className="mt-4 max-w-3xl text-sm text-muted-foreground">
-            Download the template containing your organisation’s members. Specify the data each
-            member can access, then upload the completed CSV to review the rules.
+            The template already lists your organisation’s members. Set what each member can see,
+            then upload the completed CSV to review the access rules before they go live.
           </p>
         </div>
       )}
