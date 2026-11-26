@@ -1,6 +1,6 @@
 'use client';
 
-import { Fragment, useRef, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import {
   ArrowUpRight,
   ChevronRight,
@@ -56,7 +56,7 @@ const BLOCKING_COUNT = ISSUES.filter((i) => i.severity === 'blocking').length;
 /** Prototype: simulated time to read the file + resolve every member's scope. */
 const UPLOAD_PROCESSING_MS = 1200;
 /** Saved-state condensed list: the "+N more" items behind the new-members headline. */
-const SAVED_ALERT_IDS = ['partial', 'samecol', 'trim'];
+const SAVED_ALERT_IDS = ['newmembers', 'partial', 'samecol', 'trim'];
 
 /** Download the CSV template (setup page). */
 function downloadTemplate() {
@@ -79,6 +79,7 @@ const ALERT_CATEGORY: Record<string, AlertCategory> = {
   newuser: 'nothing',
   deepak: 'nothing',
   meena: 'nothing',
+  newmembers: 'more',
   partial: 'more',
   samecol: 'fyi',
   trim: 'fyi',
@@ -88,7 +89,7 @@ const CATEGORY_ORDER: Record<AlertCategory, number> = { nothing: 0, more: 1, fyi
 const CATEGORY_DOT: Record<AlertCategory, string> = {
   nothing: 'bg-amber-500', // sees nothing — a fix to make, not a lock-out (no red, per Akansha)
   more: 'bg-amber-500', // sees more than you set
-  fyi: 'bg-muted-foreground/40', // good to know
+  fyi: 'bg-amber-500', // one amber indicator across all alerts
 };
 const categoryOf = (id: string): AlertCategory => ALERT_CATEGORY[id] ?? 'fyi';
 
@@ -269,10 +270,12 @@ function FileRow({
   fileName,
   onReplace,
   showDownload = false,
+  showUpdate = true,
 }: {
   fileName: string;
   onReplace: () => void;
   showDownload?: boolean;
+  showUpdate?: boolean;
 }) {
   return (
     <div className="flex items-center gap-3 rounded-lg border bg-muted/30 px-4 py-3">
@@ -291,9 +294,11 @@ function FileRow({
           <Download className="size-4" />
         </a>
       )}
-      <Button variant="outline" size="sm" onClick={onReplace} data-testid="row-access-update-file">
-        Update file
-      </Button>
+      {showUpdate && (
+        <Button variant="outline" size="sm" onClick={onReplace} data-testid="row-access-update-file">
+          Update file
+        </Button>
+      )}
     </div>
   );
 }
@@ -305,6 +310,7 @@ function EnableCard({
   fileName,
   onReplace,
   showDownload = false,
+  showUpdate = true,
   children,
 }: {
   enabled: boolean;
@@ -312,6 +318,7 @@ function EnableCard({
   fileName: string;
   onReplace: () => void;
   showDownload?: boolean;
+  showUpdate?: boolean;
   children?: React.ReactNode;
 }) {
   return (
@@ -324,7 +331,12 @@ function EnableCard({
         <ToggleSwitch on={enabled} onChange={onToggle} />
       </div>
       <div className="mt-6 border-t pt-6">
-        <FileRow fileName={fileName} onReplace={onReplace} showDownload={showDownload} />
+        <FileRow
+          fileName={fileName}
+          onReplace={onReplace}
+          showDownload={showDownload}
+          showUpdate={showUpdate}
+        />
         {children}
       </div>
     </div>
@@ -611,11 +623,22 @@ function FunnelReview({
   // Ideal (happy path) resolves to a tidy file where everyone is properly scoped.
   const people = ideal ? PEOPLE.map((p) => (p.clean ? { ...p, ...p.clean } : p)) : PEOPLE;
 
-  // Preview as member is an optional aid — Save & apply is always available.
-  const [showPreview, setShowPreview] = useState(false);
+  // Two-step review: configure (summary + alerts) → preview (member list) → save.
+  const [step, setStep] = useState<'config' | 'preview'>('config');
+
+  // A fresh upload restarts the review at the configure step.
+  useEffect(() => {
+    if (loading) setStep('config');
+  }, [loading]);
 
   const header = (
-    <EnableCard enabled={enabled} onToggle={onToggle} fileName={fileName} onReplace={onReplace} />
+    <EnableCard
+      enabled={enabled}
+      onToggle={onToggle}
+      fileName={fileName}
+      onReplace={onReplace}
+      showUpdate={false}
+    />
   );
 
   // While the file is read + resolved, hold on a loader — then reveal the review below.
@@ -636,70 +659,61 @@ function FunnelReview({
     <div className="pb-24" data-testid="row-access-review">
       {header}
 
-      <div className="mt-6">
-        <ImpactSummary people={people} />
-      </div>
-
-      {/* Needs attention — shown in Full; hidden on the Ideal happy path (nothing to fix) */}
-      {!ideal && (
-        <div className="mt-6 rounded-lg border bg-background p-6" data-testid="row-access-alerts">
-          <h3 className="text-base font-semibold">Needs attention</h3>
-          <div className="mt-0.5 flex flex-wrap items-start justify-between gap-x-6 gap-y-1">
-            <p className="max-w-3xl text-sm text-muted-foreground">
-              Review how these rules affect member access before applying the configuration. To fix
-              any of these, edit your sheet and upload again.
-            </p>
-            <button
-              type="button"
-              onClick={onReplace}
-              data-testid="row-access-reupload-sheet"
-              className="shrink-0 cursor-pointer text-sm font-medium text-primary hover:underline"
-            >
-              Re-upload sheet
-            </button>
+      {step === 'config' ? (
+        <>
+          <div className="mt-6">
+            <ImpactSummary people={people} />
           </div>
-          <AlertsPanel issues={shownAlerts} />
+
+          {/* Needs attention — shown in Full; hidden on the Ideal happy path (nothing to fix) */}
+          {!ideal && (
+            <div className="mt-6 rounded-lg border bg-background p-6" data-testid="row-access-alerts">
+              <h3 className="text-base font-semibold">Needs attention</h3>
+              <p className="mt-0.5 max-w-3xl text-sm text-muted-foreground">
+                Review how these rules affect what each member sees before you save. To fix any of
+                these, update your file and upload again.
+              </p>
+              <AlertsPanel issues={shownAlerts} />
+            </div>
+          )}
+        </>
+      ) : (
+        <div className="mt-6 rounded-lg border bg-background p-6" data-testid="row-access-preview">
+          <h3 className="text-base font-semibold">Member list</h3>
+          <p className="mt-0.5 text-sm text-muted-foreground">
+            What each member sees once RLS is on.
+          </p>
+          <div className="mt-4">
+            <PreviewList people={people} />
+          </div>
         </div>
       )}
 
-      {/* The applied member list */}
-      <div className="mt-6 rounded-lg border bg-background p-6">
-        <h3 className="text-base font-semibold">Preview</h3>
-        <p className="mt-0.5 text-sm text-muted-foreground">
-          What each member sees once row access is on.
-        </p>
-        <div className="mt-4">
-          <PreviewList people={people} />
-        </div>
+      <div className="fixed inset-x-0 bottom-0 z-30 flex items-center gap-3 border-t bg-background/95 px-6 py-4 backdrop-blur md:left-56">
+        {step === 'config' ? (
+          <>
+            <Button variant="outline" onClick={onReplace} data-testid="row-access-update-file-review">
+              Update file
+            </Button>
+            <Button
+              variant="primary"
+              onClick={() => setStep('preview')}
+              data-testid="row-access-continue"
+            >
+              Accept &amp; preview
+            </Button>
+          </>
+        ) : (
+          <>
+            <Button variant="outline" onClick={() => setStep('config')} data-testid="row-access-back">
+              Back
+            </Button>
+            <Button variant="primary" onClick={onSaveProceed} data-testid="row-access-save-apply">
+              Save and apply
+            </Button>
+          </>
+        )}
       </div>
-
-      <div className="fixed inset-x-0 bottom-0 z-30 flex flex-col items-start gap-2 border-t bg-background/95 px-6 py-4 backdrop-blur md:left-56">
-        <div className="flex flex-wrap items-center gap-3">
-          <Button
-            variant="outline"
-            onClick={() => setShowPreview(true)}
-            data-testid="row-access-preview-as-member"
-          >
-            <Eye className="mr-2 size-4" />
-            Preview as member
-          </Button>
-          <Button
-            variant="primary"
-            onClick={onSaveProceed}
-            data-testid="row-access-save-apply"
-          >
-            Save and apply
-          </Button>
-        </div>
-      </div>
-
-      {showPreview && (
-        <PreviewAsMemberModal
-          people={people}
-          onClose={() => setShowPreview(false)}
-          onDone={() => setShowPreview(false)}
-        />
-      )}
     </div>
   );
 }
@@ -749,7 +763,7 @@ function SavedState({ fileName, onReplace }: { fileName: string; onReplace: () =
           <SavedAlerts />
           <div className="mt-6 rounded-lg border bg-background p-6">
             <div className="mb-3 flex items-center gap-2">
-              <h3 className="text-base font-semibold">Preview</h3>
+              <h3 className="text-base font-semibold">Member list</h3>
               <span
                 className="rounded bg-primary/10 px-1.5 py-0.5 text-xs font-medium text-primary"
                 data-testid="row-access-live-badge"
@@ -790,13 +804,14 @@ function SavedAlerts() {
     (i) => i.severity !== 'blocking' && SAVED_ALERT_IDS.includes(i.id),
   );
   return (
-    <div className="mt-6 rounded-lg border bg-background p-4" data-testid="row-access-saved-alerts">
-      <div className="flex items-center gap-2.5">
-        <span className="size-2 shrink-0 rounded-full bg-amber-500" />
-        <span className="flex-1 text-sm font-semibold">
-          3 new members need access
-          <span className="font-normal text-muted-foreground"> · 3 more to review</span>
-        </span>
+    <div className="mt-6 rounded-lg border bg-background p-6" data-testid="row-access-saved-alerts">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h3 className="text-base font-semibold">Needs attention</h3>
+          <p className="mt-0.5 text-sm text-muted-foreground">
+            New members have been invited · 1 more to review
+          </p>
+        </div>
         <button
           type="button"
           onClick={() => setOpen((o) => !o)}
@@ -806,11 +821,7 @@ function SavedAlerts() {
           {open ? 'View less' : 'View more'}
         </button>
       </div>
-      {open && (
-        <div className="mt-2">
-          <AlertsPanel issues={alerts} />
-        </div>
-      )}
+      {open && <AlertsPanel issues={alerts} />}
     </div>
   );
 }
@@ -834,7 +845,6 @@ function PreviewList({
       )
     : people;
 
-  const seeTheirRows = people.filter((p) => p.status === 'access').length;
   const seeEverything = people.filter((p) => p.status === 'everything').length;
   const seeNothing = people.filter((p) => p.status === 'nothing').length;
 
@@ -843,10 +853,6 @@ function PreviewList({
       <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted-foreground">
           <span className="font-semibold text-foreground">{people.length} members</span>
-          <span aria-hidden>·</span>
-          <span>
-            <span className="font-semibold text-foreground">{seeTheirRows}</span> see limited rows
-          </span>
           <span aria-hidden>·</span>
           <span>
             <span className="font-semibold text-foreground">{seeEverything}</span> sees everything
@@ -1174,6 +1180,7 @@ function RowDetail({ person }: { person: PreviewPerson }) {
                     shows full
                   </span>
                 )}
+                <ArrowUpRight className="size-3.5 shrink-0 text-muted-foreground" aria-label="Open dashboard" />
               </li>
             ))}
           </ul>

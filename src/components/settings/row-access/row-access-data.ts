@@ -108,7 +108,7 @@ export const ISSUES: FixIssue[] = [
     id: 'newuser',
     severity: 'warning',
     title: 'New user will see nothing',
-    desc: 'Their taluka cell is blank, so no rows match. Add a taluka (or * for all) in your sheet, then re-upload.',
+    desc: 'Their taluka cell is blank, so no rows match. Add a taluka (or * for all) in your file, then re-upload.',
     fix: true,
     personId: 'newuser',
   },
@@ -116,7 +116,7 @@ export const ISSUES: FixIssue[] = [
     id: 'deepak',
     severity: 'warning',
     title: '“Ahmednagar” matches no data',
-    desc: 'Your data has “Ahilyanagar”, likely the same place. Fix the spelling in your sheet, then re-upload, so Deepak sees his rows.',
+    desc: 'Your data has “Ahilyanagar”, likely the same place. Fix the spelling in your file, then re-upload, so Deepak sees his rows.',
     fix: true,
     personId: 'deepak',
   },
@@ -124,16 +124,30 @@ export const ISSUES: FixIssue[] = [
     id: 'meena',
     severity: 'warning',
     title: 'Meena R. has no row on the list',
-    desc: 'She’s a Dalgo member with no row, so she sees nothing. Add a row for her in your sheet, then re-upload.',
+    desc: 'She’s a Dalgo member with no row, so she sees nothing. Add a row for her in your file, then re-upload.',
     fix: true,
     personId: 'meena',
   },
   // ----- Warning / Info (non-blocking; accept or fix) -----
   {
+    id: 'newmembers',
+    severity: 'warning',
+    title: '3 new members have been invited',
+    desc: 'They’re not in your access file, so row level security doesn’t apply to them — they can see every row. Update your file to scope them.',
+    affected: {
+      cta: 'See the 3 members',
+      items: [
+        { primary: 'new.user@atecf.org' },
+        { primary: 'kiran@atecf.org' },
+        { primary: 'suresh@atecf.org' },
+      ],
+    },
+  },
+  {
     id: 'partial',
     severity: 'warning',
-    title: 'Some people see their whole district',
-    desc: 'The farmer_list table has no taluka column, so taluka limits don’t apply there. These 5 people see their whole district. Accept it, or add a taluka column to that table in your data.',
+    title: 'Some members see their whole district',
+    desc: 'The farmer_list table has no taluka column, so taluka limits don’t apply there. These 5 members see their whole district. Leave it as is, or add a taluka column to that table in your data.',
     affected: {
       cta: 'See the 5 people',
       items: [
@@ -149,7 +163,7 @@ export const ISSUES: FixIssue[] = [
     id: 'samecol',
     severity: 'info',
     title: 'The “state” column won’t filter anything',
-    desc: 'It holds statuses like “approved”, not place names, so it matches nothing. Leave it out of your sheet, then re-upload.',
+    desc: 'It holds statuses like “approved”, not place names, so it matches nothing. Leave it out of your file, then re-upload.',
     affected: {
       cta: 'See the values',
       items: [
@@ -163,7 +177,7 @@ export const ISSUES: FixIssue[] = [
   {
     id: 'trim',
     severity: 'info',
-    title: 'Cleaned up 2 emails',
+    title: 'Cleaned up 2 email addresses',
     desc: 'Removed extra spaces so they match. Nothing to do.',
     affected: {
       cta: 'See the 2 emails',
@@ -177,7 +191,7 @@ export const ISSUES: FixIssue[] = [
     id: 'admininfile',
     severity: 'warning',
     title: '1 analyst is in the file',
-    desc: 'Row level security only applies to members, so this row is ignored. Remove it from your sheet and re-upload, or leave it; it has no effect.',
+    desc: 'Row level security only applies to members, so this row is ignored. Remove it from your file and re-upload, or leave it; it has no effect.',
     affected: {
       cta: 'See who',
       items: [{ primary: 'analyst@atecf.org', secondary: 'Analyst, always sees every row' }],

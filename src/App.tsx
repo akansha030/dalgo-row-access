@@ -188,7 +188,7 @@ function AccessPage() {
                 Roles
               </TabsTrigger>
               <TabsTrigger value="rowaccess" className={TAB_TRIGGER_CLASS}>
-                Row Level Security
+                RLS
               </TabsTrigger>
             </TabsList>
           </div>
